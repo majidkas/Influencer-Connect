@@ -1,0 +1,27 @@
+# PROJECT SPECIFICATION: Shopify Influencer Analytics App (MVP)## 1. Project Overview
+
+Build a Shopify App (Embedded) using the **Remix template**. The goal is to track the ROI of influencer marketing campaigns using a hybrid tracking method (UTM parameters + Discount Codes). The app serves both as a CRM for influencers and an Analytics Dashboard for merchants.
+
+## 2. Database Schema (Prisma)### Model: Influencer* `id`: String (UUID)* `name`: String* `internal_rating`: Int (1-5)* `internal_notes`: String (Text)* `created_at`: DateTime### Model: SocialAccount* `id`: String (UUID)* `influencer_id`: Relation to Influencer* `platform`: String (Enum: INSTAGRAM, TIKTOK, SNAPCHAT, YOUTUBE)* `handle`: String (e.g., "@sarah.mode")* `followers_count`: Int (Editable field)* `profile_url`: String### Model: Campaign* `id`: String (UUID)* `influencer_id`: Relation to Influencer* `name`: String* `product_url`: String* `utm_slug`: String (Unique, e.g., "sarah-summer"). **Crucial: Must be auto-generated from name but manually editable.*** `promo_code`: String (Optional, e.g., "SARAH20"). Used for attribution backup.* `cost_fixed`: Decimal (The fixed fee paid).* `commission_percent`: Decimal (The % commission on sales).* `status`: String (ACTIVE, COMPLETED)### Model: Event* `id`: String (UUID)* `campaign_id`: Relation to Campaign* `session_id`: String (To track unique users)* `event_type`: String (Enum: PAGE_VIEW, ADD_TO_CART, PURCHASE)
+
+* `revenue`: Decimal (For PURCHASE events)
+
+* `geo_country`: String* `geo_city`: String* `promo_code_used`: Boolean (True if attribution was via code)## 4. Key Functionalities & Logic### A. Campaign Creation Flow (UI)1.  User selects an Influencer.2.  User inputs Campaign Name (e.g., "Sarah Summer").3.  **Auto-Logic:** The app automatically generates a `utm_slug` ("sarah-summer").4.  **Manual Override:** The user can edit this slug to something else.5.  User inputs `product_url`, `cost_fixed`, `commission_percent`, and optionally a `promo_code`.6.  **Output:** App displays the final generated link: `store.com/product?utm_campaign={utm_slug}`.### B. Influencer CRM (UI)1.  Display list of influencers.2.  When adding a Social Account (e.g., Instagram), allow input of the Handle.3.  **Smart Feature:** Ideally, fetch follower count via API placeholder. **Requirement:** The "Followers Count" field must always be manually editable by the user, even if auto-fetched.### C. The Tracking Engine (Core Logic)**Frontend (Web Pixel Extension):*** Detect `utm_campaign` in URL.* Store `campaign_id` in Browser Storage (localStorage/cookie) with a 30-day window.* Fire API call on `page_view` and `product_added_to_cart`.**Backend (Order Attribution):*** Listen to `orders/create` Webhook.* **Priority Rule 1 (Code):** Check if `discount_codes` in the order matches a Campaign's `promo_code`. If yes -> Attribute to Campaign.* **Priority Rule 2 (Cookie):** If no code, check cart attributes/cookies for `campaign_id`. If found -> Attribute to Campaign.* Calculate Commission based on order total * `commission_percent`.
+
+
+
+### D. Analytics Dashboard (UI)
+
+Display a table with the following computed columns per Campaign:
+
+1.  **Visits:** Count of unique sessions.
+
+2.  **Add to Carts:** Count of ATC events.
+
+3.  **Orders:** Count of attributed orders.
+
+4.  **Promo Code Usage:** Count of orders where attribution was via Code.
+
+5.  **Total Revenue:** Sum of order values.
+
+6.  **Total Cost:** `cost_fixed` + (Revenue * `commission_percent`).7.  **ROI / ROAS:** (Revenue - Total Cost) / Total Cost.## 5. UI Guidelines* Use standard Polaris components (`<Card>`, `<DataTable>`, `<TextField>`, `<Page>`).* Ensure the dashboard is sortable by ROI and Revenue.
