@@ -4,6 +4,22 @@ import { storage } from "./storage";
 import { insertInfluencerSchema, insertCampaignSchema, insertEventSchema } from "@shared/schema";
 import { z } from "zod";
 import { shopify, SHOPIFY_SCOPES } from "./shopify";
+import crypto from "crypto";
+
+function verifyShopifyWebhook(rawBody: string, hmacHeader: string): boolean {
+  const secret = process.env.SHOPIFY_API_SECRET;
+  if (!secret || !hmacHeader) return false;
+  
+  const generatedHmac = crypto
+    .createHmac("sha256", secret)
+    .update(rawBody, "utf8")
+    .digest("base64");
+  
+  return crypto.timingSafeEqual(
+    Buffer.from(generatedHmac),
+    Buffer.from(hmacHeader)
+  );
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -194,6 +210,14 @@ export async function registerRoutes(
   // ============ SHOPIFY WEBHOOKS ============
   app.post("/api/webhooks/orders/create", async (req, res) => {
     try {
+      const hmacHeader = req.get("X-Shopify-Hmac-Sha256") || "";
+      const rawBody = JSON.stringify(req.body);
+      
+      if (!verifyShopifyWebhook(rawBody, hmacHeader)) {
+        console.error("Webhook signature verification failed");
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
       const order = req.body;
       const discountCodes = order.discount_codes || [];
       
