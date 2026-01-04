@@ -41,6 +41,7 @@ const campaignFormSchema = z.object({
   name: z.string().min(1, "Campaign name is required"),
   slugUtm: z.string().min(1, "UTM slug is required"),
   promoCode: z.string().optional().or(z.literal("")),
+  productUrl: z.string().optional().or(z.literal("")),
   costFixed: z.number().min(0).default(0),
   commissionPercent: z.number().min(0).max(100).default(0),
   status: z.enum(["active", "paused", "completed"]).default("active"),
@@ -191,6 +192,7 @@ function CampaignFormDialog({
       name: campaign?.name || "",
       slugUtm: campaign?.slugUtm || "",
       promoCode: campaign?.promoCode || "",
+      productUrl: campaign?.productUrl || "",
       costFixed: campaign?.costFixed || 0,
       commissionPercent: campaign?.commissionPercent || 0,
       status: (campaign?.status as "active" | "paused" | "completed") || "active",
@@ -363,6 +365,28 @@ function CampaignFormDialog({
                   </FormControl>
                   <FormDescription>
                     Used for secure attribution tracking
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="productUrl"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Product URL</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder="https://your-store.myshopify.com/products/summer-dress"
+                      {...field}
+                      value={field.value || ""}
+                      data-testid="input-product-url"
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    The Shopify product page for this campaign
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

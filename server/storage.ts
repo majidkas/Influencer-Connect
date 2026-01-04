@@ -3,6 +3,7 @@ import {
   socialAccounts,
   campaigns,
   events,
+  shops,
   type Influencer,
   type InsertInfluencer,
   type SocialAccount,
@@ -11,6 +12,8 @@ import {
   type InsertCampaign,
   type Event,
   type InsertEvent,
+  type Shop,
+  type InsertShop,
   type InfluencerWithSocials,
   type CampaignWithInfluencer,
   type CampaignWithStats,
@@ -19,6 +22,11 @@ import { db } from "./db";
 import { eq, sql, and, count } from "drizzle-orm";
 
 export interface IStorage {
+  // Shops (Shopify)
+  getShopByDomain(shopDomain: string): Promise<Shop | undefined>;
+  upsertShop(data: InsertShop): Promise<Shop>;
+  deleteShop(shopDomain: string): Promise<boolean>;
+
   // Influencers
   getInfluencers(): Promise<InfluencerWithSocials[]>;
   getInfluencer(id: string): Promise<InfluencerWithSocials | undefined>;
@@ -34,6 +42,8 @@ export interface IStorage {
   // Campaigns
   getCampaigns(): Promise<CampaignWithInfluencer[]>;
   getCampaign(id: string): Promise<CampaignWithInfluencer | undefined>;
+  getCampaignByUtmSlug(slugUtm: string): Promise<Campaign | undefined>;
+  getCampaignByPromoCode(promoCode: string): Promise<Campaign | undefined>;
   getCampaignsWithStats(): Promise<CampaignWithStats[]>;
   createCampaign(data: InsertCampaign): Promise<Campaign>;
   updateCampaign(id: string, data: Partial<InsertCampaign>): Promise<Campaign | undefined>;
@@ -42,6 +52,7 @@ export interface IStorage {
   // Events
   createEvent(data: InsertEvent): Promise<Event>;
   getEventsByCampaign(campaignId: string): Promise<Event[]>;
+  getUniqueSessionsCount(campaignId: string): Promise<number>;
 
   // Stats
   getStats(): Promise<{
@@ -53,6 +64,31 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  // Shops (Shopify)
+  async getShopByDomain(shopDomain: string): Promise<Shop | undefined> {
+    const [shop] = await db.select().from(shops).where(eq(shops.shopDomain, shopDomain));
+    return shop;
+  }
+
+  async upsertShop(data: InsertShop): Promise<Shop> {
+    const existing = await this.getShopByDomain(data.shopDomain);
+    if (existing) {
+      const [updated] = await db
+        .update(shops)
+        .set({ accessToken: data.accessToken, scope: data.scope, isActive: true })
+        .where(eq(shops.shopDomain, data.shopDomain))
+        .returning();
+      return updated;
+    }
+    const [shop] = await db.insert(shops).values(data).returning();
+    return shop;
+  }
+
+  async deleteShop(shopDomain: string): Promise<boolean> {
+    const result = await db.delete(shops).where(eq(shops.shopDomain, shopDomain)).returning();
+    return result.length > 0;
+  }
+
   // Influencers
   async getInfluencers(): Promise<InfluencerWithSocials[]> {
     const allInfluencers = await db.select().from(influencers).orderBy(influencers.createdAt);
@@ -164,6 +200,16 @@ export class DatabaseStorage implements IStorage {
     return { ...campaign, influencer };
   }
 
+  async getCampaignByUtmSlug(slugUtm: string): Promise<Campaign | undefined> {
+    const [campaign] = await db.select().from(campaigns).where(eq(campaigns.slugUtm, slugUtm));
+    return campaign;
+  }
+
+  async getCampaignByPromoCode(promoCode: string): Promise<Campaign | undefined> {
+    const [campaign] = await db.select().from(campaigns).where(eq(campaigns.promoCode, promoCode));
+    return campaign;
+  }
+
   async getCampaignsWithStats(): Promise<CampaignWithStats[]> {
     const allCampaigns = await db.select().from(campaigns).orderBy(campaigns.createdAt);
     const allInfluencers = await db.select().from(influencers);
@@ -171,11 +217,13 @@ export class DatabaseStorage implements IStorage {
 
     return allCampaigns.map((campaign) => {
       const campaignEvents = allEvents.filter((e) => e.campaignId === campaign.id);
-      const clicks = campaignEvents.filter((e) => e.eventType === "click").length;
+      const pageViews = campaignEvents.filter((e) => e.eventType === "page_view");
+      const uniqueSessions = new Set(pageViews.map((e) => e.sessionId).filter(Boolean)).size;
+      const clicks = uniqueSessions || pageViews.length;
       const addToCarts = campaignEvents.filter((e) => e.eventType === "add_to_cart").length;
       const purchases = campaignEvents.filter((e) => e.eventType === "purchase");
       const orders = purchases.length;
-      const promoCodeUsage = purchases.filter((e) => e.source === "promo_code").length;
+      const promoCodeUsage = purchases.filter((e) => e.promoCodeUsed === true).length;
       const revenue = purchases.reduce((sum, e) => sum + (e.revenue || 0), 0);
       const commissionCost = revenue * ((campaign.commissionPercent || 0) / 100);
       const totalCost = (campaign.costFixed || 0) + commissionCost;
@@ -222,6 +270,15 @@ export class DatabaseStorage implements IStorage {
 
   async getEventsByCampaign(campaignId: string): Promise<Event[]> {
     return db.select().from(events).where(eq(events.campaignId, campaignId));
+  }
+
+  async getUniqueSessionsCount(campaignId: string): Promise<number> {
+    const campaignEvents = await db
+      .select()
+      .from(events)
+      .where(and(eq(events.campaignId, campaignId), eq(events.eventType, "page_view")));
+    const uniqueSessions = new Set(campaignEvents.map((e) => e.sessionId).filter(Boolean));
+    return uniqueSessions.size;
   }
 
   // Stats

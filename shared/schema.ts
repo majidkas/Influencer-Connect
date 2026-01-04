@@ -1,7 +1,17 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, integer, real, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, real, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+// Shopify shops table - stores shop credentials and tokens
+export const shops = pgTable("shops", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  shopDomain: text("shop_domain").notNull().unique(),
+  accessToken: text("access_token").notNull(),
+  scope: text("scope"),
+  isActive: boolean("is_active").default(true),
+  installedAt: timestamp("installed_at").defaultNow(),
+});
 
 // Influencers table - Core CRM data
 export const influencers = pgTable("influencers", {
@@ -31,6 +41,7 @@ export const campaigns = pgTable("campaigns", {
   name: text("name").notNull(),
   slugUtm: text("slug_utm").notNull(),
   promoCode: text("promo_code"),
+  productUrl: text("product_url"), // Shopify product URL for the campaign
   costFixed: real("cost_fixed").default(0),
   commissionPercent: real("commission_percent").default(0),
   status: text("status").default("active"), // active, paused, completed
@@ -41,9 +52,13 @@ export const campaigns = pgTable("campaigns", {
 export const events = pgTable("events", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   campaignId: varchar("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
-  eventType: text("event_type").notNull(), // click, add_to_cart, purchase
+  eventType: text("event_type").notNull(), // page_view, add_to_cart, purchase
+  sessionId: text("session_id"), // Unique visitor session ID
   revenue: real("revenue").default(0),
-  source: text("source"), // link_click, promo_code
+  geoCountry: text("geo_country"),
+  geoCity: text("geo_city"),
+  promoCodeUsed: boolean("promo_code_used").default(false), // True if attribution via code
+  source: text("source"), // utm, promo_code
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -76,6 +91,11 @@ export const eventsRelations = relations(events, ({ one }) => ({
 }));
 
 // Insert schemas
+export const insertShopSchema = createInsertSchema(shops).omit({
+  id: true,
+  installedAt: true,
+});
+
 export const insertInfluencerSchema = createInsertSchema(influencers).omit({
   id: true,
   createdAt: true,
@@ -96,6 +116,9 @@ export const insertEventSchema = createInsertSchema(events).omit({
 });
 
 // Types
+export type Shop = typeof shops.$inferSelect;
+export type InsertShop = z.infer<typeof insertShopSchema>;
+
 export type Influencer = typeof influencers.$inferSelect;
 export type InsertInfluencer = z.infer<typeof insertInfluencerSchema>;
 

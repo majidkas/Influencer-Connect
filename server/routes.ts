@@ -3,11 +3,222 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertInfluencerSchema, insertCampaignSchema, insertEventSchema } from "@shared/schema";
 import { z } from "zod";
+import { shopify, SHOPIFY_SCOPES } from "./shopify";
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // ============ SHOPIFY OAUTH ============
+  app.get("/api/shopify/auth", async (req, res) => {
+    try {
+      const shop = req.query.shop as string;
+      if (!shop) {
+        return res.status(400).json({ message: "Missing shop parameter" });
+      }
+
+      const sanitizedShop = shopify.utils.sanitizeShop(shop, true);
+      if (!sanitizedShop) {
+        return res.status(400).json({ message: "Invalid shop parameter" });
+      }
+
+      const authUrl = await shopify.auth.begin({
+        shop: sanitizedShop,
+        callbackPath: "/api/shopify/callback",
+        isOnline: false,
+        rawRequest: req,
+        rawResponse: res,
+      });
+
+      res.redirect(authUrl);
+    } catch (error) {
+      console.error("Shopify auth error:", error);
+      res.status(500).json({ message: "Failed to start Shopify authentication" });
+    }
+  });
+
+  app.get("/api/shopify/callback", async (req, res) => {
+    try {
+      const callback = await shopify.auth.callback({
+        rawRequest: req,
+        rawResponse: res,
+      });
+
+      const { session } = callback;
+      
+      await storage.upsertShop({
+        shopDomain: session.shop,
+        accessToken: session.accessToken || "",
+        scope: session.scope || "",
+      });
+
+      const host = req.query.host as string;
+      res.redirect(`/?shop=${session.shop}&host=${host}`);
+    } catch (error) {
+      console.error("Shopify callback error:", error);
+      res.status(500).json({ message: "Failed to complete Shopify authentication" });
+    }
+  });
+
+  app.get("/api/shopify/shop", async (req, res) => {
+    try {
+      const shop = req.query.shop as string;
+      if (!shop) {
+        return res.status(400).json({ message: "Missing shop parameter" });
+      }
+
+      const shopData = await storage.getShopByDomain(shop);
+      if (!shopData) {
+        return res.status(404).json({ message: "Shop not found", needsAuth: true });
+      }
+
+      res.json({ shop: shopData.shopDomain, isActive: shopData.isActive });
+    } catch (error) {
+      console.error("Error fetching shop:", error);
+      res.status(500).json({ message: "Failed to fetch shop" });
+    }
+  });
+
+  // ============ TRACKING PIXEL ============
+  app.get("/api/tracking/pixel.js", async (req, res) => {
+    const appUrl = process.env.REPLIT_DEV_DOMAIN || `https://${req.get("host")}`;
+    
+    const script = `
+(function() {
+  var APP_URL = "${appUrl}";
+  
+  function getSessionId() {
+    var sessionId = localStorage.getItem('_inf_session');
+    if (!sessionId) {
+      sessionId = 'sess_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+      localStorage.setItem('_inf_session', sessionId);
+    }
+    return sessionId;
+  }
+  
+  function getUtmCampaign() {
+    var params = new URLSearchParams(window.location.search);
+    var utmCampaign = params.get('utm_campaign');
+    if (utmCampaign) {
+      localStorage.setItem('_inf_utm', utmCampaign);
+      localStorage.setItem('_inf_utm_ts', Date.now().toString());
+    }
+    return localStorage.getItem('_inf_utm');
+  }
+  
+  function trackEvent(eventType, data) {
+    var utmCampaign = getUtmCampaign();
+    if (!utmCampaign) return;
+    
+    var payload = {
+      slugUtm: utmCampaign,
+      sessionId: getSessionId(),
+      eventType: eventType,
+      revenue: data.revenue || 0,
+      geoCountry: data.country || '',
+      geoCity: data.city || '',
+      promoCodeUsed: data.promoCode ? true : false,
+      promoCode: data.promoCode || null
+    };
+    
+    fetch(APP_URL + '/api/tracking/event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      mode: 'cors'
+    }).catch(function(e) { console.log('Tracking error:', e); });
+  }
+  
+  var utmCampaign = getUtmCampaign();
+  if (utmCampaign) {
+    trackEvent('page_view', {});
+  }
+  
+  window.InfluencerTracker = {
+    trackAddToCart: function(data) { trackEvent('add_to_cart', data || {}); },
+    trackPurchase: function(data) { trackEvent('purchase', data || {}); }
+  };
+})();
+`;
+    
+    res.setHeader("Content-Type", "application/javascript");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.send(script);
+  });
+
+  app.post("/api/tracking/event", async (req, res) => {
+    try {
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+      const { slugUtm, promoCode, sessionId, eventType, revenue, geoCountry, geoCity, promoCodeUsed } = req.body;
+
+      let campaign = null;
+      if (slugUtm) {
+        campaign = await storage.getCampaignByUtmSlug(slugUtm);
+      }
+      if (!campaign && promoCode) {
+        campaign = await storage.getCampaignByPromoCode(promoCode);
+      }
+
+      if (!campaign) {
+        return res.status(404).json({ message: "Campaign not found" });
+      }
+
+      const event = await storage.createEvent({
+        campaignId: campaign.id,
+        eventType,
+        sessionId: sessionId || null,
+        revenue: revenue || 0,
+        geoCountry: geoCountry || null,
+        geoCity: geoCity || null,
+        promoCodeUsed: promoCodeUsed || false,
+        source: promoCodeUsed ? "promo_code" : "utm",
+      });
+
+      res.status(201).json({ success: true, eventId: event.id });
+    } catch (error) {
+      console.error("Error tracking event:", error);
+      res.status(500).json({ message: "Failed to track event" });
+    }
+  });
+
+  app.options("/api/tracking/event", (req, res) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.status(204).send();
+  });
+
+  // ============ SHOPIFY WEBHOOKS ============
+  app.post("/api/webhooks/orders/create", async (req, res) => {
+    try {
+      const order = req.body;
+      const discountCodes = order.discount_codes || [];
+      
+      for (const discount of discountCodes) {
+        const campaign = await storage.getCampaignByPromoCode(discount.code);
+        if (campaign) {
+          await storage.createEvent({
+            campaignId: campaign.id,
+            eventType: "purchase",
+            revenue: parseFloat(order.total_price) || 0,
+            promoCodeUsed: true,
+            source: "promo_code",
+            geoCountry: order.billing_address?.country || null,
+            geoCity: order.billing_address?.city || null,
+          });
+        }
+      }
+
+      res.status(200).json({ success: true });
+    } catch (error) {
+      console.error("Webhook error:", error);
+      res.status(500).json({ message: "Webhook processing failed" });
+    }
+  });
+
   // ============ STATS ============
   app.get("/api/stats", async (req, res) => {
     try {
