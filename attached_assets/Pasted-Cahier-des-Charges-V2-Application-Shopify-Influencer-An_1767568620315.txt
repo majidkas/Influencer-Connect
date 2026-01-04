@@ -1,0 +1,134 @@
+Cahier des Charges V2 : Application Shopify "Influencer Analytics"
+Date de révision : 5 Janvier 2026 Type de projet : Application Shopify (Embedded App) Objectif : Outil SaaS et Agence pour tracker le ROI des influenceurs via un système hybride (UTM + Code Promo), avec une interface visuelle riche (gestion des photos de profil).
+
+1. Vue d'Ensemble & Objectifs
+L'application permet de centraliser la gestion des partenariats influenceurs. Elle doit offrir une expérience visuelle fluide (reconnaissance immédiate de l'influenceur par sa photo) et une rigueur financière absolue (tracking des ventes et commissions).
+
+Les 3 Piliers du projet :
+
+Expérience Visuelle (UI) : Identifier les partenaires en un coup d'œil grâce à leurs avatars sociaux.
+
+Fiabilité du Tracking : Double sécurité (Lien + Code Promo).
+
+Rentabilité (ROI) : Calcul automatique des marges, commissions et bénéfices réels.
+
+2. Spécifications Fonctionnelles (Ce que l'utilisateur voit)
+2.1. Module CRM Influenceurs (Le Profil)
+L'utilisateur crée et gère les fiches de ses partenaires.
+
+Identité Visuelle (NOUVEAU & CRITIQUE) :
+
+L'Avatar (Photo) : Une image ronde représentant l'influenceur.
+
+Logique "Auto-Magique" : Lorsque l'utilisateur entre le pseudo Instagram (ex: @sarah.mode), le système tente de récupérer automatiquement la photo de profil publique.
+
+Logique "Fallback Manuel" : Si la récupération échoue ou si la photo ne plaît pas, l'utilisateur doit pouvoir importer une image lui-même (Upload) ou coller une URL d'image.
+
+Données : Nom, Email, Notes internes, Note (1-5 étoiles).
+
+Comptes Sociaux : Ajout des différents canaux (Insta, TikTok, Snap) avec leurs nombres d'abonnés respectifs (récupérés automatiquement si possible, mais toujours modifiables manuellement).
+
+2.2. Module de Création de Campagne
+Interface de configuration d'une opération marketing.
+
+Sélection Visuelle : Le menu déroulant pour choisir l'influenceur doit afficher sa petite photo (avatar) à côté de son nom pour éviter les erreurs d'homonymes.
+
+Configuration du Tracking :
+
+Nom de la campagne -> Génération auto du slug UTM -> Modification manuelle possible.
+
+Association d'un Code Promo (ex: "SARAH20") pour sécuriser l'attribution.
+
+Configuration Financière :
+
+Coût Fixe (Cachet).
+
+Commission Variable (%).
+
+2.3. Dashboard Analytique (Tableau de Bord)
+Le tableau principal doit être très visuel.
+
+Colonnes du tableau :
+
+Influenceur : Affichage de la Photo (Avatar) + Nom.
+
+Campagne : Nom de l'opération + Statut.
+
+Performances d'Engagement : Clics, Ajouts Panier.
+
+Performances Commerciales : Nombre de Commandes, Utilisation Code Promo (Volume).
+
+Finances : Chiffre d'Affaires généré.
+
+Coûts : Total (Fixe + Com).
+
+Rentabilité (ROI) : Affichage conditionnel (Vert = Rentable, Rouge = Perte).
+
+3. Spécifications Techniques (Pour le Développeur)
+3.1. Stack Technologique
+Framework : Remix (Node.js + React).
+
+Base de Données : PostgreSQL + Prisma.
+
+Design System : Shopify Polaris (Composant <Avatar> à utiliser impérativement).
+
+Stockage Images : Le développeur devra prévoir un champ pour stocker l'URL de l'image. Si l'utilisateur upload une image manuellement, l'app devra soit utiliser l'API Shopify Files, soit stocker l'URL externe.
+
+Tracking : Shopify Web Pixels API + Webhooks.
+
+3.2. Architecture de la Base de Données (Mise à jour)
+Table Influencers :
+
+id (UUID)
+
+name (String)
+
+profile_image_url (String) -> Nouveau champ. Stocke l'URL de l'image (CDN Instagram ou Upload manuel).
+
+internal_rating (Int)
+
+internal_notes (Text)
+
+Table SocialAccounts :
+
+influencer_id, platform, handle, followers_count.
+
+Table Campaigns :
+
+influencer_id, slug_utm, promo_code, cost_fixed, commission_percent.
+
+Table Events :
+
+campaign_id, event_type, revenue, source (link_click vs promo_code).
+
+3.3. Logique de Récupération d'Image (Scraping)
+Processus : À la création de l'influenceur, déclencher une fonction asynchrone qui interroge une API publique (ou un service tiers) avec le handle Instagram.
+
+Gestion d'erreur : Si l'image ne peut pas être récupérée (compte privé, API limit), afficher un avatar par défaut (initiales) et inviter l'utilisateur à uploader une image manuellement.
+
+3.4. Logique d'Attribution (Algorithme "Double Check")
+L'attribution des ventes suit cette hiérarchie stricte :
+
+Priorité Absolue : Le Code Promo. Si la commande contient le code "SARAH20", la vente est attribuée à la campagne liée, peu importe d'où vient le visiteur.
+
+Priorité Secondaire : Le Cookie. Si aucun code n'est utilisé, on vérifie la présence du cookie de tracking (campaign_id) posé par le Pixel lors de la visite.
+
+4. Livrables Attendus
+Code Source : Dépôt GitHub propre.
+
+Application Fonctionnelle : Installée sur un store de test.
+
+Documentation : Expliquant comment configurer la connexion API pour le scraping (si une clé API externe est nécessaire).
+
+5. Scénario de Recette (Test Final)
+Pour valider la mission, nous testerons le flux "Visuel" :
+
+J'ajoute l'influenceuse "Emma".
+
+Je rentre son Instagram @emma.test.
+
+Vérification : L'app récupère et affiche sa photo de profil automatiquement.
+
+Je change d'avis, je clique sur "Modifier la photo" et je mets une autre image via une URL.
+
+Vérification Dashboard : Je crée une campagne et je vois bien la nouvelle photo d'Emma dans mon tableau de bord de rentabilité.
