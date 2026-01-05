@@ -6,7 +6,20 @@ import { storage } from "./storage";
 import { shopify } from "./shopify";
 
 const app = express();
-app.set("trust proxy", 1);  // Ajoute cette ligne
+// --- ROUTE DE DEBUG (A SUPPRIMER PLUS TARD) ---
+app.get("/debug-cloud", (req, res) => {
+  res.json({
+    "Ce que voit le serveur": {
+      protocol: req.protocol, // DOIT ÊTRE "https"
+      secure: req.secure,     // DOIT ÊTRE true
+      host: req.get('host'),
+      trustProxySetting: app.get('trust proxy')
+    },
+    "Les Headers reçus": req.headers
+  });
+});
+// ----------------------------------------------
+app.set("trust proxy", true); // Ajoute cette ligne
 const httpServer = createServer(app);
 
 declare module "http" {
