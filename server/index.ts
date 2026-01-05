@@ -2,6 +2,8 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { storage } from "./storage";
+import { shopify } from "./shopify";
 
 const app = express();
 const httpServer = createServer(app);
@@ -32,6 +34,38 @@ export function log(message: string, source = "express") {
 
   console.log(`${formattedTime} [${source}] ${message}`);
 }
+
+// Shopify app entry point - intercept requests with shop parameter
+app.use(async (req, res, next) => {
+  // Only intercept root path with shop parameter (Shopify app load)
+  if (req.path === "/" && req.query.shop) {
+    const shop = req.query.shop as string;
+    console.log("[Shopify Entry] App loaded for shop:", shop);
+    
+    try {
+      // Validate shop domain
+      const sanitizedShop = shopify.utils.sanitizeShop(shop, true);
+      if (!sanitizedShop) {
+        return res.status(400).send("Invalid shop parameter");
+      }
+
+      // Check if shop is already authenticated
+      const shopData = await storage.getShopByDomain(sanitizedShop);
+      if (shopData && shopData.accessToken) {
+        console.log("[Shopify Entry] Shop authenticated, serving app");
+        return next(); // Serve the frontend
+      }
+
+      // Shop not authenticated, redirect to OAuth
+      console.log("[Shopify Entry] Shop not authenticated, redirecting to OAuth");
+      return res.redirect(`/api/shopify/auth?shop=${sanitizedShop}`);
+    } catch (error) {
+      console.error("[Shopify Entry] Error:", error);
+      return res.status(500).send("App loading error");
+    }
+  }
+  next();
+});
 
 app.use((req, res, next) => {
   const start = Date.now();

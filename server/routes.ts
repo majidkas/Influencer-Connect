@@ -25,6 +25,34 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // ============ SHOPIFY APP ENTRY POINT ============
+  // This handles when Shopify loads our app (legacy install flow)
+  app.get("/api/shopify/install", async (req, res) => {
+    try {
+      const shop = req.query.shop as string;
+      console.log("[Install] App loaded for shop:", shop);
+      
+      if (!shop) {
+        return res.status(400).send("Missing shop parameter");
+      }
+
+      // Check if shop is already authenticated
+      const shopData = await storage.getShopByDomain(shop);
+      if (shopData && shopData.accessToken) {
+        // Shop is authenticated, redirect to embedded app
+        const shopName = shop.replace(".myshopify.com", "");
+        return res.redirect(`https://admin.shopify.com/store/${shopName}/apps/app-influ`);
+      }
+
+      // Shop not authenticated, start OAuth
+      console.log("[Install] Shop not authenticated, redirecting to OAuth");
+      return res.redirect(`/api/shopify/auth?shop=${shop}`);
+    } catch (error) {
+      console.error("[Install] Error:", error);
+      res.status(500).send("Installation error");
+    }
+  });
+
   // ============ SHOPIFY OAUTH ============
   app.get("/api/shopify/auth", async (req, res) => {
     try {
