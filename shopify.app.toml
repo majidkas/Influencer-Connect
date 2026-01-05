@@ -1,8 +1,10 @@
 name = "Influencer Analytics"
-client_id = "your-client-id"
+client_id = "85712f0b474c2d3939642ad3b1085885"
+application_url = "https://api.influtrak.com"
+embedded = true
 
 [access_scopes]
-scopes = "read_products,read_orders,read_customers,read_discounts,write_discounts,write_script_tags,read_script_tags"
+scopes = "read_products,read_orders,read_discounts,write_discounts,write_script_tags,read_script_tags,read_pixels,write_pixels"
 
 [auth]
 redirect_urls = [
@@ -11,16 +13,12 @@ redirect_urls = [
 ]
 
 [webhooks]
-api_version = "2024-01"
-
-  [[webhooks.subscriptions]]
-  topics = ["orders/create"]
-  uri = "https://api.influtrak.com/api/webhooks/orders/create"
+api_version = "2025-01"
 
 [app_proxy]
 url = "https://api.influtrak.com"
-subpath = "apps"
-prefix = "influencer"
+subpath = "influencer"
+prefix = "apps"
 
 [pos]
 embedded = false

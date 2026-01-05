@@ -1,6 +1,6 @@
 import { register } from "@shopify/web-pixels-extension";
 
-const BACKEND_URL = "https://influ-connect.replit.app";
+const BACKEND_URL = "https://api.influtrak.com";
 const UTM_STORAGE_KEY = "_inf_utm";
 const SESSION_STORAGE_KEY = "_inf_session";
 const UTM_EXPIRY_DAYS = 30;
