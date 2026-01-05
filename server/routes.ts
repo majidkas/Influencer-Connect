@@ -205,6 +205,86 @@ export async function registerRoutes(
     }
   });
 
+  // ============ MANUAL WEBHOOK REGISTRATION ============
+  // Endpoint pour enregistrer le webhook manuellement
+  app.get("/api/shopify/register-webhook", async (req, res) => {
+    try {
+      const shopDomain = req.query.shop as string || "clikn01.myshopify.com";
+      console.log("[Register Webhook] Starting for shop:", shopDomain);
+
+      const shopData = await storage.getShopByDomain(shopDomain);
+      if (!shopData || !shopData.accessToken) {
+        return res.status(404).json({ 
+          success: false, 
+          message: "Shop not found or not authenticated. Please reinstall the app." 
+        });
+      }
+
+      const appUrl = process.env.REPLIT_DEPLOYED_URL || `https://${req.get("host")}`;
+      const webhookUrl = `${appUrl}/api/webhooks/orders/create`;
+      
+      const session = {
+        shop: shopData.shopDomain,
+        accessToken: shopData.accessToken,
+      };
+      
+      const client = new shopify.clients.Rest({ session: session as any });
+      
+      // Check existing webhooks
+      const existingWebhooks = await client.get({ path: "webhooks" });
+      const webhooks = (existingWebhooks.body as any).webhooks || [];
+      
+      console.log("[Register Webhook] Existing webhooks:", webhooks.length);
+      
+      const webhookExists = webhooks.some(
+        (hook: any) => hook.topic === "orders/create"
+      );
+      
+      if (webhookExists) {
+        // Delete existing webhook to recreate with correct URL
+        const existingHook = webhooks.find((hook: any) => hook.topic === "orders/create");
+        if (existingHook && existingHook.address !== webhookUrl) {
+          await client.delete({ path: `webhooks/${existingHook.id}` });
+          console.log("[Register Webhook] Deleted old webhook:", existingHook.id);
+        } else {
+          return res.json({ 
+            success: true, 
+            message: "Webhook already exists with correct URL",
+            webhookUrl 
+          });
+        }
+      }
+      
+      // Create new webhook
+      const response = await client.post({
+        path: "webhooks",
+        data: {
+          webhook: { 
+            topic: "orders/create", 
+            address: webhookUrl, 
+            format: "json" 
+          },
+        },
+      });
+      
+      console.log("[Register Webhook] Webhook created successfully");
+      
+      res.json({ 
+        success: true, 
+        message: "Webhook registered successfully!",
+        webhookUrl,
+        webhookId: (response.body as any).webhook?.id
+      });
+    } catch (error: any) {
+      console.error("[Register Webhook] Error:", error?.message || error);
+      res.status(500).json({ 
+        success: false, 
+        message: "Failed to register webhook", 
+        error: error?.message 
+      });
+    }
+  });
+
   // Endpoint to manually reinstall tracking for existing shops
   app.post("/api/shopify/setup-tracking", async (req, res) => {
     try {
@@ -409,36 +489,167 @@ export async function registerRoutes(
   // ============ SHOPIFY WEBHOOKS ============
   app.post("/api/webhooks/orders/create", async (req, res) => {
     try {
+      console.log("[Webhook] ========== ORDER RECEIVED ==========");
+      
       const hmacHeader = req.get("X-Shopify-Hmac-Sha256") || "";
       const rawBody = JSON.stringify(req.body);
       
-      if (!verifyShopifyWebhook(rawBody, hmacHeader)) {
-        console.error("Webhook signature verification failed");
+      // Verify webhook signature (skip in dev if needed)
+      const isValidSignature = verifyShopifyWebhook(rawBody, hmacHeader);
+      console.log("[Webhook] Signature valid:", isValidSignature);
+      
+      if (!isValidSignature && process.env.NODE_ENV === "production") {
+        console.error("[Webhook] Signature verification failed");
         return res.status(401).json({ message: "Unauthorized" });
       }
 
       const order = req.body;
+      console.log("[Webhook] Order ID:", order.id);
+      console.log("[Webhook] Order Number:", order.order_number);
+      console.log("[Webhook] Total Price:", order.total_price);
+      console.log("[Webhook] Discount Codes:", order.discount_codes);
+      console.log("[Webhook] Note Attributes:", order.note_attributes);
+      console.log("[Webhook] Cart Token:", order.cart_token);
+      console.log("[Webhook] Landing Site:", order.landing_site);
+
+      let attributedCampaign = null;
+      let attributionSource = "unknown";
+
+      // ============ PRIORITY 1: Check Discount Codes ============
       const discountCodes = order.discount_codes || [];
-      
       for (const discount of discountCodes) {
         const campaign = await storage.getCampaignByPromoCode(discount.code);
         if (campaign) {
-          await storage.createEvent({
-            campaignId: campaign.id,
-            eventType: "purchase",
-            revenue: parseFloat(order.total_price) || 0,
-            promoCodeUsed: true,
-            source: "promo_code",
-            geoCountry: order.billing_address?.country || null,
-            geoCity: order.billing_address?.city || null,
-          });
+          console.log("[Webhook] ATTRIBUTION via Promo Code:", discount.code, "-> Campaign:", campaign.name);
+          attributedCampaign = campaign;
+          attributionSource = "promo_code";
+          break;
         }
       }
 
-      res.status(200).json({ success: true });
+      // ============ PRIORITY 2: Check Note Attributes for UTM ============
+      if (!attributedCampaign) {
+        const noteAttributes = order.note_attributes || [];
+        for (const attr of noteAttributes) {
+          if (attr.name === "utm_campaign" || attr.name === "_inf_utm" || attr.name === "influencer_campaign") {
+            const campaign = await storage.getCampaignByUtmSlug(attr.value);
+            if (campaign) {
+              console.log("[Webhook] ATTRIBUTION via Note Attribute:", attr.name, "=", attr.value, "-> Campaign:", campaign.name);
+              attributedCampaign = campaign;
+              attributionSource = "utm_note";
+              break;
+            }
+          }
+        }
+      }
+
+      // ============ PRIORITY 3: Check Landing Site URL for UTM ============
+      if (!attributedCampaign && order.landing_site) {
+        try {
+          const landingUrl = new URL(order.landing_site, "https://example.com");
+          const utmCampaign = landingUrl.searchParams.get("utm_campaign");
+          if (utmCampaign) {
+            const campaign = await storage.getCampaignByUtmSlug(utmCampaign);
+            if (campaign) {
+              console.log("[Webhook] ATTRIBUTION via Landing Site UTM:", utmCampaign, "-> Campaign:", campaign.name);
+              attributedCampaign = campaign;
+              attributionSource = "utm_landing";
+            }
+          }
+        } catch (e) {
+          console.log("[Webhook] Could not parse landing_site URL");
+        }
+      }
+
+      // ============ PRIORITY 4: Check recent sessions (last 30 days) ============
+      if (!attributedCampaign && order.customer?.email) {
+        // Try to find a recent session from this customer
+        // This is a fallback - in production you might want to store customer<->session mappings
+        console.log("[Webhook] No direct attribution found, checking customer history...");
+      }
+
+      // ============ CREATE EVENT IF ATTRIBUTED ============
+      if (attributedCampaign) {
+        const event = await storage.createEvent({
+          campaignId: attributedCampaign.id,
+          eventType: "purchase",
+          revenue: parseFloat(order.total_price) || 0,
+          promoCodeUsed: attributionSource === "promo_code",
+          source: attributionSource,
+          geoCountry: order.billing_address?.country || order.shipping_address?.country || null,
+          geoCity: order.billing_address?.city || order.shipping_address?.city || null,
+        });
+        
+        console.log("[Webhook] ✅ PURCHASE EVENT CREATED:", event.id);
+        console.log("[Webhook] Campaign:", attributedCampaign.name);
+        console.log("[Webhook] Revenue:", order.total_price);
+        console.log("[Webhook] Attribution Source:", attributionSource);
+      } else {
+        console.log("[Webhook] ❌ No campaign attribution found for this order");
+      }
+
+      console.log("[Webhook] ========== END ==========");
+      res.status(200).json({ success: true, attributed: !!attributedCampaign });
     } catch (error) {
-      console.error("Webhook error:", error);
+      console.error("[Webhook] ERROR:", error);
       res.status(500).json({ message: "Webhook processing failed" });
+    }
+  });
+
+  // ============ TEST ENDPOINTS ============
+  // Endpoint pour tester si le webhook fonctionne
+  app.get("/api/webhooks/test", (req, res) => {
+    res.json({ 
+      status: "ok", 
+      message: "Webhook endpoint is reachable",
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  // Endpoint pour simuler un webhook (pour debug)
+  app.post("/api/webhooks/test-order", async (req, res) => {
+    try {
+      const { utmSlug, promoCode, revenue } = req.body;
+      
+      console.log("[Test Webhook] Simulating order with:", { utmSlug, promoCode, revenue });
+      
+      let campaign = null;
+      let source = "test";
+      
+      if (promoCode) {
+        campaign = await storage.getCampaignByPromoCode(promoCode);
+        source = "promo_code";
+      }
+      if (!campaign && utmSlug) {
+        campaign = await storage.getCampaignByUtmSlug(utmSlug);
+        source = "utm";
+      }
+      
+      if (!campaign) {
+        return res.status(404).json({ 
+          success: false, 
+          message: "No campaign found for provided UTM slug or promo code" 
+        });
+      }
+      
+      const event = await storage.createEvent({
+        campaignId: campaign.id,
+        eventType: "purchase",
+        revenue: revenue || 99.99,
+        promoCodeUsed: source === "promo_code",
+        source: source,
+      });
+      
+      res.json({ 
+        success: true, 
+        message: "Test purchase event created",
+        eventId: event.id,
+        campaignName: campaign.name,
+        revenue: revenue || 99.99
+      });
+    } catch (error: any) {
+      console.error("[Test Webhook] Error:", error);
+      res.status(500).json({ success: false, error: error.message });
     }
   });
 

@@ -1,11 +1,22 @@
-[extension]
-name = "Influencer Tracking Pixel"
-handle = "influencer-tracking-pixel"
+
+uid = "c5fcf820-3fb1-017e-8fe4-d4f9e935804a56febac2"
 type = "web_pixel_extension"
+name = "Influencer Tracking Pixel"
+runtime_context = "strict"
+
+[customer_privacy]
+analytics = true
+marketing = true
+preferences = false
+sale_of_data = "enabled"
 
 [settings]
-  [[settings.fields]]
-  key = "accountId"
-  name = "Account ID"
-  description = "Your influencer analytics account ID"
-  type = "single_line_text_field"
+type = "object"
+
+[settings.fields.accountID]
+name = "Account ID"
+description = "Your influencer analytics account ID"
+type = "single_line_text_field"
+validations = [
+  { name = "min", value = "1" }
+]
