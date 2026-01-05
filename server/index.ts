@@ -6,6 +6,7 @@ import { storage } from "./storage";
 import { shopify } from "./shopify";
 
 const app = express();
+app.set("trust proxy", 1);  // Ajoute cette ligne
 const httpServer = createServer(app);
 
 declare module "http" {
@@ -41,7 +42,7 @@ app.use(async (req, res, next) => {
   if (req.path === "/" && req.query.shop) {
     const shop = req.query.shop as string;
     console.log("[Shopify Entry] App loaded for shop:", shop);
-    
+
     try {
       // Validate shop domain
       const sanitizedShop = shopify.utils.sanitizeShop(shop, true);
