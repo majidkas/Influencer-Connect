@@ -29,6 +29,9 @@ export async function registerRoutes(
   app.get("/api/shopify/auth", async (req, res) => {
     try {
       const shop = req.query.shop as string;
+      console.log("[OAuth] Starting auth for shop:", shop);
+      console.log("[OAuth] Configured scopes:", SHOPIFY_SCOPES);
+      
       if (!shop) {
         return res.status(400).json({ message: "Missing shop parameter" });
       }
@@ -46,21 +49,25 @@ export async function registerRoutes(
         rawResponse: res,
       });
 
+      console.log("[OAuth] Redirecting to auth URL:", authUrl);
       res.redirect(authUrl);
     } catch (error) {
-      console.error("Shopify auth error:", error);
+      console.error("[OAuth] Shopify auth error:", error);
       res.status(500).json({ message: "Failed to start Shopify authentication" });
     }
   });
 
   app.get("/api/shopify/callback", async (req, res) => {
     try {
+      console.log("[OAuth Callback] Processing callback...");
       const callback = await shopify.auth.callback({
         rawRequest: req,
         rawResponse: res,
       });
 
       const { session } = callback;
+      console.log("[OAuth Callback] Session received for shop:", session.shop);
+      console.log("[OAuth Callback] Granted scopes:", session.scope);
       
       await storage.upsertShop({
         shopDomain: session.shop,
