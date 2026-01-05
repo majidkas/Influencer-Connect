@@ -357,8 +357,13 @@ export async function registerRoutes(
       res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-      const { slugUtm, promoCode, sessionId, eventType, revenue, geoCountry, geoCity, promoCodeUsed } = req.body;
-      console.log("[Tracking] Event received:", { slugUtm, eventType, sessionId, revenue });
+      const { 
+        slugUtm, promoCode, sessionId, eventType, revenue, 
+        geoCountry, geoCity, promoCodeUsed,
+        productId, productTitle, quantity, currency, orderId, source 
+      } = req.body;
+      
+      console.log("[Tracking] Event received:", { slugUtm, eventType, sessionId, revenue, source: source || "legacy" });
 
       let campaign = null;
       if (slugUtm) {
@@ -383,9 +388,10 @@ export async function registerRoutes(
         geoCountry: geoCountry || null,
         geoCity: geoCity || null,
         promoCodeUsed: promoCodeUsed || false,
-        source: promoCodeUsed ? "promo_code" : "utm",
+        source: source || (promoCodeUsed ? "promo_code" : "utm"),
       });
 
+      console.log("[Tracking] Event created:", event.id, "for campaign:", campaign.name);
       res.status(201).json({ success: true, eventId: event.id });
     } catch (error) {
       console.error("Error tracking event:", error);

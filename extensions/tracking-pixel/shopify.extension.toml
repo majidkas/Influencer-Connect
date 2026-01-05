@@ -1,0 +1,11 @@
+[extension]
+name = "Influencer Tracking Pixel"
+handle = "influencer-tracking-pixel"
+type = "web_pixel_extension"
+
+[settings]
+  [[settings.fields]]
+  key = "accountId"
+  name = "Account ID"
+  description = "Your influencer analytics account ID"
+  type = "single_line_text_field"

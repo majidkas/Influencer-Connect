@@ -1,0 +1,29 @@
+name = "Influencer Analytics"
+client_id = "your-client-id"
+
+[access_scopes]
+scopes = "read_products,read_orders,read_customers,read_discounts,write_discounts,write_script_tags,read_script_tags"
+
+[auth]
+redirect_urls = [
+  "https://influ-connect.replit.app/api/auth/callback"
+]
+
+[webhooks]
+api_version = "2024-01"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create"]
+  uri = "https://influ-connect.replit.app/api/webhooks/orders/create"
+
+[app_proxy]
+url = "https://influ-connect.replit.app"
+subpath = "apps"
+prefix = "influencer"
+
+[pos]
+embedded = false
+
+[build]
+automatically_update_urls_on_dev = false
+dev_store_url = "clikn01.myshopify.com"
