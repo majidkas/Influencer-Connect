@@ -1,0 +1,322 @@
+---
+title: Manage access scopes
+description: Learn how to manage access scopes for your app.
+source_url:
+  html: >-
+    https://shopify.dev/docs/apps/build/authentication-authorization/app-installation/manage-access-scopes
+  md: >-
+    https://shopify.dev/docs/apps/build/authentication-authorization/app-installation/manage-access-scopes.md
+---
+
+ExpandOn this page
+
+* [Access scope configurations](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation/manage-access-scopes.md#access-scope-configurations)
+* [Modify declared scopes](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation/manage-access-scopes.md#modify-declared-scopes)
+* [Query currently granted scopes](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation/manage-access-scopes.md#query-currently-granted-scopes)
+* [Request new access scopes dynamically](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation/manage-access-scopes.md#request-new-access-scopes-dynamically)
+* [Revoke granted scopes dynamically](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation/manage-access-scopes.md#revoke-granted-scopes-dynamically)
+* [Developer tools and resources](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation/manage-access-scopes.md#developer-tools-and-resources)
+
+# Manage access scopes
+
+After you've enabled [Shopify managed install](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation), you can manage your app's [access scopes](https://shopify.dev/docs/api/usage/access-scopes).
+
+Note
+
+Note: If you're still using the legacy installation and OAuth authorization code grant flow, then refer to the [authorization code grant](https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/authorization-code-grant#manage-access-scopes) guide on managing access scopes instead.
+
+***
+
+## Access scope configurations
+
+There are two ways you can [configure your access scopes](https://shopify.dev/docs/apps/build/cli-for-apps/app-configuration#access_scopes):
+
+| Configuration | Description |
+| - | - |
+| `scopes` | These configured access scopes are mandatory when merchants install your app with [Shopify managed install](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation). Merchants **must** grant access before your app can be installed. Your app is guaranteed to have these access scopes after it's installed on the merchant's store. |
+| `optional_scopes` | Unlike required scopes, optional scopes can only be requested by the app post-installation. When requested, merchants have the option to grant access to these scopes, or to decline them. Merchants can also revoke previously granted optional scopes. Optional scopes are useful if you want to provide certain features to different stores, without forcing every app install to provide the same data access. |
+
+### Scopes
+
+The required access scopes are defined in the `scopes` field of your app's TOML file:
+
+## shopify.app.config-name.toml
+
+```toml
+name = "Example App"
+client_id = "a61950a2cbd5f32876b0b55587ec7a27"
+application_url = "https://www.app.example.com/"
+embedded = true
+
+
+[access_scopes]
+scopes = "read_discounts,write_products"
+...
+```
+
+When a merchant installs your app, they're prompted to grant permission to **all** the access scopes that you've defined in the `scopes` field. After the app is installed, it's guaranteed to have the required access scopes.
+
+### Optional scopes
+
+The access scopes that can be [requested dynamically](#request-new-access-scopes-dynamically) are defined in the `optional_scopes` field of the app's TOML file:
+
+## shopify.app.config-name.toml
+
+```toml
+name = "Example App"
+client_id = "a61950a2cbd5f32876b0b55587ec7a27"
+application_url = "https://www.app.example.com/"
+embedded = true
+
+
+[access_scopes]
+scopes = "" # The `scopes` field is still necessary, but can be empty.
+optional_scopes = ["read_discounts", "write_products"]
+...
+```
+
+When a merchant installs your app, they're not prompted during installation to grant permission to the access scopes that you've defined in the `optional_scopes` field.
+
+The [app initiates the request](#request-new-access-scopes-dynamically) to gain access to these scopes after the installation is complete, if necessary.
+
+***
+
+## Modify declared scopes
+
+To declare more or fewer access scopes for your app, update your app's [configuration TOML file](https://shopify.dev/docs/apps/build/cli-for-apps/app-configuration#access_scopes) and deploy the changes.
+
+1. Modify the `scopes` or `optional_scopes` fields in your app's TOML file to include the desired set of access scopes.
+2. Deploy the access scope changes by running the following Shopify CLI command:
+
+## Terminal
+
+```terminal
+shopify app deploy
+```
+
+1. (Optional). Subscribe to the [app/scopes\_update](https://shopify.dev/docs/api/webhooks/latest?reference=toml#list-of-topics-app/scopes_update) topic to receive webhooks when the granted scopes are updated.
+
+#### Modifying the `scopes` field
+
+If you modified the `scopes` field, then the following behavior occurs:
+
+* Merchants will be prompted to approve the updated access scopes when they open your app.
+  * The `app/scopes_update` webhook will be triggered when the merchant approves the access scope changes.
+* If the change is a reduction of scopes, the merchant won't be prompted and the app will lose access to the scopes automatically when the merchant opens the app.
+  * The `app/scopes_update` webhook will be triggered when the user opens the app.
+
+#### Modifying the `optional_scopes` field
+
+If you modify the `optional_scopes` field, then the following behavior occurs:
+
+* Your app can now start [requesting the new access scopes](#request-new-access-scopes-dynamically).
+* The granted access scopes for your app installation won't change until your app requests for the new access scopes dynamically and the merchant grants your app access to the newly updated scopes.
+  * The `app/scopes_update` webhook will be triggered when the merchant approves the access scope changes.
+
+***
+
+## Query currently granted scopes
+
+You can use [GraphQL queries](https://shopify.dev/docs/api/admin-graphql/latest/queries/currentAppInstallation) to get the currently granted access scopes for your app installation.
+
+## Example request to retrieve currently granted access scopes using currentAppInstallation
+
+## POST https://{shop}.myshopify.com/api/{api\_version}/graphql.json
+
+```graphql
+query {
+  currentAppInstallation {
+    accessScopes {
+      description
+      handle
+    }
+  }
+}
+```
+
+## Response
+
+```json
+{
+  "data": {
+    "currentAppInstallation": {
+      "accessScopes": [
+        {
+          "description": "Modify products, variants, and collections",
+          "handle": "write_products"
+        },
+        {
+          "description": "Read products, variants, and collections",
+          "handle": "read_products"
+        }
+      ]
+    }
+  },
+  ...
+}
+```
+
+### Shopify API libraries
+
+You can also use the following helper methods in Shopify's API libraries to query for the currently granted access scopes:
+
+| Library | Method |
+| - | - |
+| App Bridge API | [shopify.scopes.query()](https://shopify.dev/docs/api/app-home/apis/scopes#scopes-propertydetail-query) |
+| React Router API | [scopes.query()](https://shopify.dev/docs/api/shopify-app-react-router/latest/apis/scopes#scopes-propertydetail-query) |
+
+***
+
+## Request new access scopes dynamically
+
+Note
+
+You can only request additional access scopes dynamically if they are configured as `optional_scopes` in your app's TOML file, and if the configuration changes have been deployed. Access scopes configured in the `scopes` field can't be requested dynamically.
+
+### Request access scopes using the App Bridge API for embedded apps
+
+If you're building an embedded app, then you should use the [App Bridge scopes API](https://shopify.dev/docs/api/app-home/apis/scopes#scopes-propertydetail-request) to request new access scopes dynamically.
+
+```javascript
+shopify.scopes.request(['read_discounts', 'write_products']);
+```
+
+This method **doesn't require a browser redirect** and can be performed on the client side of an embedded app. This asynchronous, client-side method displays a permission grant modal for the access scopes requested, on top of your running embedded app.
+
+Example permission grant modal:
+
+![Optional scopes request grant modal](https://shopify.dev/assets/assets/images/apps/auth/optional-scopes-grant-modal-DKVaj88Z.png)
+
+### Request access scopes using a request URL for non-embedded apps
+
+To request optional scopes dynamically for a non-embedded app, you can direct the merchant to the request URL so they can grant approval to the new access scopes.
+
+## Browser redirect URL
+
+```text
+https://admin.shopify.com/store/{STORE_NAME}/oauth/install?client_id={CLIENT_ID}&optional_scopes={REQUESTED_SCOPES}
+```
+
+| Query parameter | Description |
+| - | - |
+| `STORE_NAME` | The name of the merchant's store |
+| `CLIENT_ID` | The app's client ID |
+| `REQUESTED_SCOPES` | A comma separated list of access scopes to request. This must be a subset of the declared `optional_scopes` in your TOML file. |
+
+Example request URL:
+
+```text
+https://admin.shopify.com/store/my-cool-store/oauth/install?client_id=a61950a2cbd5f32876b0b55587ec7a27&optional_scopes=read_discounts,write_products
+```
+
+### Shopify API libraries
+
+You can use the following helper methods in Shopify's API libraries to request for new access scopes dynamically:
+
+| Library | Method | Description |
+| - | - | - |
+| App Bridge API | [shopify.scopes.request()](https://shopify.dev/docs/api/app-home/apis/scopes#scopes-propertydetail-request) | This asynchronous, client-side method displays a permission grant modal for the access scopes requested, on top of your running embedded app. |
+| React Router API | [scopes.request()](https://shopify.dev/docs/api/shopify-app-react-router/latest/apis/scopes#scopes-propertydetail-request) | This is recommended for non-embedded apps and server side handling from a React Router app. |
+
+***
+
+## Revoke granted scopes dynamically
+
+Note
+
+Only scopes configured as `optional_scopes` and that were [dynamically granted](#request-new-access-scopes-dynamically) can be revoked. Access scopes configured in the `scopes` field can't be revoked dynamically.
+
+If your app no longer requires certain access scopes from a merchant's store, we recommend revoking the access scopes. This helps to avoid a potential data leak, if the access token is ever compromised.
+
+You can revoke access scopes by making a [GraphQL mutation](https://shopify.dev/docs/api/admin-graphql/latest/mutations/appRevokeAccessScopes).
+
+## Example request to revoke granted optional access scopes
+
+## POST https://{shop}.myshopify.com/api/{api\_version}/graphql.json
+
+```graphql
+mutation {
+  appRevokeAccessScopes(scopes: ["read_discounts","write_products"]) {
+    revoked {
+      handle
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+```
+
+## Response
+
+```json
+{
+  "data": {
+    "appRevokeAccessScopes": {
+      "revoked": [
+        {
+          "handle": "write_discounts"
+        },
+        {
+          "handle": "write_products"
+        }
+      ],
+      "userErrors": []
+    }
+  },
+  ...
+}
+```
+
+### Shopify API libraries
+
+You can use the following helper methods in Shopify's API libraries to revoke granted access scopes:
+
+| Library | Method |
+| - | - |
+| App Bridge API | [shopify.scopes.revoke()](https://shopify.dev/docs/api/app-home/apis/scopes#scopes-propertydetail-revoke) |
+| React Router API | [scopes.revoke()](https://shopify.dev/docs/api/shopify-app-react-router/latest/apis/scopes#scopes-propertydetail-revoke) |
+
+***
+
+## Developer tools and resources
+
+[App Bridge scopes API\
+\
+](https://shopify.dev/docs/api/app-home/apis/scopes)
+
+[Learn how to use the `scopes` API in the App Bridge library.](https://shopify.dev/docs/api/app-home/apis/scopes)
+
+[React Router scopes API\
+\
+](https://shopify.dev/docs/api/shopify-app-react-router/latest/apis/scopes)
+
+[Learn how to use the `scopes` API in the React Router library.](https://shopify.dev/docs/api/shopify-app-react-router/latest/apis/scopes)
+
+[Token exchange\
+\
+](https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/token-exchange)
+
+[Learn how to acquire access tokens for embedded apps through token exchange.](https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/token-exchange)
+
+[Shopify API access scopes\
+\
+](https://shopify.dev/docs/api/usage/access-scopes)
+
+[Learn more about access scopes.](https://shopify.dev/docs/api/usage/access-scopes)
+
+[Shopify CLI configuration file\
+\
+](https://shopify.dev/docs/apps/build/cli-for-apps/app-configuration#access_scopes)
+
+[Learn more about Shopify CLI configuration file.](https://shopify.dev/docs/apps/build/cli-for-apps/app-configuration#access_scopes)
+
+***
+
+* [Access scope configurations](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation/manage-access-scopes.md#access-scope-configurations)
+* [Modify declared scopes](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation/manage-access-scopes.md#modify-declared-scopes)
+* [Query currently granted scopes](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation/manage-access-scopes.md#query-currently-granted-scopes)
+* [Request new access scopes dynamically](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation/manage-access-scopes.md#request-new-access-scopes-dynamically)
+* [Revoke granted scopes dynamically](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation/manage-access-scopes.md#revoke-granted-scopes-dynamically)
+* [Developer tools and resources](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation/manage-access-scopes.md#developer-tools-and-resources)
