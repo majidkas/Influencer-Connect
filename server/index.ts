@@ -72,7 +72,26 @@ app.use(async (req, res, next) => {
 
       // Shop not authenticated, redirect to OAuth
       console.log("[Shopify Entry] Shop not authenticated, redirecting to OAuth");
-      return res.redirect(`/api/shopify/auth?shop=${sanitizedShop}`);
+      // Shop not authenticated, redirect to OAuth
+        console.log("[Shopify Entry] Shop not authenticated, breaking out of iframe to OAuth");
+
+        // FIX CRITIQUE : On force la redirection au niveau "Top Window" pour sortir de l'iframe.
+        // Cela permet au navigateur d'accepter le cookie de session (First Party).
+        const authUrl = `/api/shopify/auth?shop=${sanitizedShop}`;
+        return res.status(200).send(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <script>
+                // Redirection de la fenêtre principale (pas juste l'iframe)
+                window.top.location.href = "${authUrl}";
+              </script>
+            </head>
+            <body>
+              Redirecting to authentication...
+            </body>
+          </html>
+        `);
     } catch (error) {
       console.error("[Shopify Entry] Error:", error);
       return res.status(500).send("App loading error");
