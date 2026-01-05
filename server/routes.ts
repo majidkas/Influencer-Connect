@@ -77,8 +77,7 @@ export async function registerRoutes(
         rawResponse: res,
       });
 
-      console.log("[OAuth] Redirecting to auth URL:", authUrl);
-      res.redirect(authUrl);
+
     } catch (error) {
       console.error("[OAuth] Shopify auth error:", error);
       res.status(500).json({ message: "Failed to start Shopify authentication" });
