@@ -133,8 +133,14 @@ export async function registerRoutes(
         // Continue anyway - the app will still work, just won't track automatically
       }
 
+      // For embedded apps, redirect back to Shopify admin
       const host = req.query.host as string;
-      res.redirect(`/?shop=${session.shop}&host=${host}`);
+      const shopName = session.shop.replace(".myshopify.com", "");
+      
+      // Redirect to embedded app in Shopify admin
+      const embeddedUrl = `https://admin.shopify.com/store/${shopName}/apps/app-influ`;
+      console.log("[OAuth Callback] Redirecting to embedded URL:", embeddedUrl);
+      res.redirect(embeddedUrl);
     } catch (error) {
       console.error("Shopify callback error:", error);
       res.status(500).json({ message: "Failed to complete Shopify authentication" });
