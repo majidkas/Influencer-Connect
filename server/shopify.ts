@@ -15,6 +15,7 @@ const getHostName = () => {
 };
 
 // Scopes must match exactly what's configured in Partner Dashboard
+// Note: There are NO separate webhook scopes - webhooks use the data scopes (e.g. read_orders)
 const SCOPES = [
   "read_products",
   "read_orders", 
@@ -24,8 +25,6 @@ const SCOPES = [
   "read_script_tags",
   "write_script_tags",
   "read_customer_events",
-  "read_webhooks",
-  "write_webhooks",
 ];
 
 export const shopify = shopifyApi({

@@ -88,6 +88,8 @@ export async function registerRoutes(
   app.get("/api/shopify/callback", async (req, res) => {
     try {
       console.log("[OAuth Callback] Processing callback...");
+      console.log("[OAuth Callback] Query params:", JSON.stringify(req.query));
+      
       const callback = await shopify.auth.callback({
         rawRequest: req,
         rawResponse: res,
@@ -95,18 +97,21 @@ export async function registerRoutes(
 
       const { session } = callback;
       console.log("[OAuth Callback] Session received for shop:", session.shop);
+      console.log("[OAuth Callback] Access token received:", !!session.accessToken);
       console.log("[OAuth Callback] Granted scopes:", session.scope);
       
+      // Save shop to database - this is critical
       await storage.upsertShop({
         shopDomain: session.shop,
         accessToken: session.accessToken || "",
         scope: session.scope || "",
       });
+      console.log("[OAuth Callback] Shop saved to database");
 
       // Get app URL for registering script tag and webhook
-      const appUrl = process.env.REPLIT_DEPLOYED_URL || process.env.REPLIT_DEV_DOMAIN || `https://${req.get("host")}`;
+      const appUrl = process.env.REPLIT_DEPLOYED_URL || `https://${req.get("host")}`;
       
-      // Register script tag for tracking pixel
+      // Register script tag for tracking pixel (non-blocking)
       try {
         const client = new shopify.clients.Rest({ session });
         
@@ -130,10 +135,17 @@ export async function registerRoutes(
               },
             },
           });
-          console.log(`Script tag registered for ${session.shop}`);
+          console.log(`[OAuth Callback] Script tag registered for ${session.shop}`);
+        } else {
+          console.log(`[OAuth Callback] Script tag already exists for ${session.shop}`);
         }
+      } catch (scriptError: any) {
+        console.error("[OAuth Callback] Script tag setup error (non-fatal):", scriptError?.message || scriptError);
+      }
         
-        // Register webhook for order creation
+      // Register webhook for order creation (non-blocking)
+      try {
+        const client = new shopify.clients.Rest({ session });
         const existingWebhooks = await client.get({
           path: "webhooks",
         });
@@ -154,24 +166,23 @@ export async function registerRoutes(
               },
             },
           });
-          console.log(`Webhook registered for ${session.shop}`);
+          console.log(`[OAuth Callback] Webhook registered for ${session.shop}`);
+        } else {
+          console.log(`[OAuth Callback] Webhook already exists for ${session.shop}`);
         }
-      } catch (setupError) {
-        console.error("Error setting up script tag or webhook:", setupError);
-        // Continue anyway - the app will still work, just won't track automatically
+      } catch (webhookError: any) {
+        console.error("[OAuth Callback] Webhook setup error (non-fatal):", webhookError?.message || webhookError);
       }
 
       // For embedded apps, redirect back to Shopify admin
-      const host = req.query.host as string;
       const shopName = session.shop.replace(".myshopify.com", "");
-      
-      // Redirect to embedded app in Shopify admin
       const embeddedUrl = `https://admin.shopify.com/store/${shopName}/apps/app-influ`;
       console.log("[OAuth Callback] Redirecting to embedded URL:", embeddedUrl);
-      res.redirect(embeddedUrl);
-    } catch (error) {
-      console.error("Shopify callback error:", error);
-      res.status(500).json({ message: "Failed to complete Shopify authentication" });
+      return res.redirect(embeddedUrl);
+    } catch (error: any) {
+      console.error("[OAuth Callback] CRITICAL ERROR:", error?.message || error);
+      console.error("[OAuth Callback] Error stack:", error?.stack);
+      res.status(500).send("Installation failed. Please try again or contact support.");
     }
   });
 
