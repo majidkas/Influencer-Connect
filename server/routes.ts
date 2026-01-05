@@ -68,6 +68,64 @@ export async function registerRoutes(
         scope: session.scope || "",
       });
 
+      // Get app URL for registering script tag and webhook
+      const appUrl = process.env.REPLIT_DEPLOYED_URL || process.env.REPLIT_DEV_DOMAIN || `https://${req.get("host")}`;
+      
+      // Register script tag for tracking pixel
+      try {
+        const client = new shopify.clients.Rest({ session });
+        
+        // First, check if script tag already exists
+        const existingScripts = await client.get({
+          path: "script_tags",
+        });
+        
+        const pixelUrl = `${appUrl}/api/tracking/pixel.js`;
+        const scriptExists = (existingScripts.body as any).script_tags?.some(
+          (tag: any) => tag.src === pixelUrl
+        );
+        
+        if (!scriptExists) {
+          await client.post({
+            path: "script_tags",
+            data: {
+              script_tag: {
+                event: "onload",
+                src: pixelUrl,
+              },
+            },
+          });
+          console.log(`Script tag registered for ${session.shop}`);
+        }
+        
+        // Register webhook for order creation
+        const existingWebhooks = await client.get({
+          path: "webhooks",
+        });
+        
+        const webhookUrl = `${appUrl}/api/webhooks/orders/create`;
+        const webhookExists = (existingWebhooks.body as any).webhooks?.some(
+          (hook: any) => hook.address === webhookUrl && hook.topic === "orders/create"
+        );
+        
+        if (!webhookExists) {
+          await client.post({
+            path: "webhooks",
+            data: {
+              webhook: {
+                topic: "orders/create",
+                address: webhookUrl,
+                format: "json",
+              },
+            },
+          });
+          console.log(`Webhook registered for ${session.shop}`);
+        }
+      } catch (setupError) {
+        console.error("Error setting up script tag or webhook:", setupError);
+        // Continue anyway - the app will still work, just won't track automatically
+      }
+
       const host = req.query.host as string;
       res.redirect(`/?shop=${session.shop}&host=${host}`);
     } catch (error) {
@@ -92,6 +150,85 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching shop:", error);
       res.status(500).json({ message: "Failed to fetch shop" });
+    }
+  });
+
+  // Endpoint to manually reinstall tracking for existing shops
+  app.post("/api/shopify/setup-tracking", async (req, res) => {
+    try {
+      const { shopDomain } = req.body;
+      if (!shopDomain) {
+        return res.status(400).json({ message: "Missing shopDomain" });
+      }
+
+      const shopData = await storage.getShopByDomain(shopDomain);
+      if (!shopData || !shopData.accessToken) {
+        return res.status(404).json({ message: "Shop not found or not authenticated" });
+      }
+
+      const appUrl = process.env.REPLIT_DEPLOYED_URL || process.env.REPLIT_DEV_DOMAIN || `https://${req.get("host")}`;
+      
+      const session = {
+        shop: shopData.shopDomain,
+        accessToken: shopData.accessToken,
+      };
+      
+      const client = new shopify.clients.Rest({ session: session as any });
+      
+      const results = { scriptTag: false, webhook: false, errors: [] as string[] };
+      
+      // Register script tag
+      try {
+        const existingScripts = await client.get({ path: "script_tags" });
+        const pixelUrl = `${appUrl}/api/tracking/pixel.js`;
+        const scriptExists = (existingScripts.body as any).script_tags?.some(
+          (tag: any) => tag.src === pixelUrl
+        );
+        
+        if (!scriptExists) {
+          await client.post({
+            path: "script_tags",
+            data: {
+              script_tag: { event: "onload", src: pixelUrl },
+            },
+          });
+        }
+        results.scriptTag = true;
+      } catch (e: any) {
+        results.errors.push(`Script tag error: ${e.message}`);
+      }
+      
+      // Register webhook
+      try {
+        const existingWebhooks = await client.get({ path: "webhooks" });
+        const webhookUrl = `${appUrl}/api/webhooks/orders/create`;
+        const webhookExists = (existingWebhooks.body as any).webhooks?.some(
+          (hook: any) => hook.address === webhookUrl && hook.topic === "orders/create"
+        );
+        
+        if (!webhookExists) {
+          await client.post({
+            path: "webhooks",
+            data: {
+              webhook: { topic: "orders/create", address: webhookUrl, format: "json" },
+            },
+          });
+        }
+        results.webhook = true;
+      } catch (e: any) {
+        results.errors.push(`Webhook error: ${e.message}`);
+      }
+      
+      res.json({ 
+        success: results.scriptTag && results.webhook, 
+        results,
+        appUrl,
+        pixelUrl: `${appUrl}/api/tracking/pixel.js`,
+        webhookUrl: `${appUrl}/api/webhooks/orders/create`
+      });
+    } catch (error: any) {
+      console.error("Setup tracking error:", error);
+      res.status(500).json({ message: "Failed to setup tracking", error: error.message });
     }
   });
 
