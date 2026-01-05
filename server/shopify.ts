@@ -24,6 +24,8 @@ const SCOPES = [
   "read_script_tags",
   "write_script_tags",
   "read_customer_events",
+  "read_webhooks",
+  "write_webhooks",
 ];
 
 export const shopify = shopifyApi({
