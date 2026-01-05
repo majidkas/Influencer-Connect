@@ -286,7 +286,7 @@ export async function registerRoutes(
 
   // ============ TRACKING PIXEL ============
   app.get("/api/tracking/pixel.js", async (req, res) => {
-    const appUrl = process.env.REPLIT_DEV_DOMAIN || `https://${req.get("host")}`;
+    const appUrl = process.env.REPLIT_DEPLOYED_URL || `https://${req.get("host")}`;
     
     const script = `
 (function() {
@@ -358,16 +358,20 @@ export async function registerRoutes(
       res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
       const { slugUtm, promoCode, sessionId, eventType, revenue, geoCountry, geoCity, promoCodeUsed } = req.body;
+      console.log("[Tracking] Event received:", { slugUtm, eventType, sessionId, revenue });
 
       let campaign = null;
       if (slugUtm) {
         campaign = await storage.getCampaignByUtmSlug(slugUtm);
+        console.log("[Tracking] Campaign lookup by UTM:", slugUtm, "-> Found:", !!campaign);
       }
       if (!campaign && promoCode) {
         campaign = await storage.getCampaignByPromoCode(promoCode);
+        console.log("[Tracking] Campaign lookup by promo:", promoCode, "-> Found:", !!campaign);
       }
 
       if (!campaign) {
+        console.log("[Tracking] No campaign found for:", { slugUtm, promoCode });
         return res.status(404).json({ message: "Campaign not found" });
       }
 
