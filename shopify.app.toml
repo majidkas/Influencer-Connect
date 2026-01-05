@@ -1,22 +1,29 @@
 name = "Influencer Analytics"
-client_id = "85712f0b474c2d3939642ad3b1085885"
-application_url = "https://influ-connect.replit.app"
-embedded = true
+client_id = "your-client-id"
 
 [access_scopes]
-scopes = "write_pixels,read_customer_events"
+scopes = "read_products,read_orders,read_customers,read_discounts,write_discounts,write_script_tags,read_script_tags"
 
 [auth]
 redirect_urls = [
-  "https://influ-connect.replit.app/api/auth/callback"
+  "https://api.influtrak.com/api/auth/callback",
+  "https://api.influtrak.com/api/shopify/callback"
 ]
 
 [webhooks]
 api_version = "2024-01"
 
   [[webhooks.subscriptions]]
-  topics = ["app/uninstalled"]
-  uri = "https://influ-connect.replit.app/api/webhooks/app/uninstalled"
+  topics = ["orders/create"]
+  uri = "https://api.influtrak.com/api/webhooks/orders/create"
+
+[app_proxy]
+url = "https://api.influtrak.com"
+subpath = "apps"
+prefix = "influencer"
+
+[pos]
+embedded = false
 
 [build]
 automatically_update_urls_on_dev = false
