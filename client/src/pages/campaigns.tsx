@@ -33,7 +33,7 @@ import {
 import { InfluencerAvatar } from "@/components/influencer-avatar";
 import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Megaphone, Link as LinkIcon, Tag, DollarSign, Percent } from "lucide-react";
+import { Plus, Pencil, Trash2, Megaphone, Link as LinkIcon, Tag, DollarSign, Percent, Copy, Check } from "lucide-react";
 import type { CampaignWithInfluencer, Influencer } from "@shared/schema";
 
 const campaignFormSchema = z.object({
@@ -90,6 +90,31 @@ function CampaignCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+
+  const getSponsoredLink = () => {
+    if (campaign.productUrl && campaign.slugUtm) {
+      const separator = campaign.productUrl.includes("?") ? "&" : "?";
+      return `${campaign.productUrl}${separator}utm_campaign=${campaign.slugUtm}`;
+    }
+    return null;
+  };
+
+  const handleCopyLink = async () => {
+    const link = getSponsoredLink();
+    if (link) {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      toast({ title: "Lien sponsorisé copié" });
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      toast({ title: "URL produit manquante", variant: "destructive" });
+    }
+  };
+
+  const sponsoredLink = getSponsoredLink();
+
   return (
     <Card className="hover-elevate" data-testid={`card-campaign-${campaign.id}`}>
       <CardHeader className="flex flex-row items-start gap-4 pb-2">
@@ -111,8 +136,8 @@ function CampaignCard({
       <CardContent className="space-y-2">
         <div className="flex items-center gap-2 text-sm">
           <LinkIcon className="h-4 w-4 text-muted-foreground" />
-          <code className="bg-muted px-2 py-0.5 rounded text-xs">
-            ?utm_campaign={campaign.slugUtm}
+          <code className="bg-muted px-2 py-0.5 rounded text-xs truncate max-w-[200px]">
+            {campaign.slugUtm}
           </code>
         </div>
         {campaign.promoCode && (
@@ -132,7 +157,18 @@ function CampaignCard({
           </div>
         </div>
       </CardContent>
-      <CardFooter className="flex justify-end gap-2 pt-2">
+      <CardFooter className="flex justify-end gap-2 pt-2 flex-wrap">
+        {sponsoredLink && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCopyLink}
+            data-testid="button-copy-sponsored-link"
+          >
+            {copied ? <Check className="h-4 w-4 mr-1" /> : <Copy className="h-4 w-4 mr-1" />}
+            Lien sponsorisé
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"
@@ -166,6 +202,55 @@ function InfluencerSelectItem({ influencer }: { influencer: Influencer }) {
         size="sm"
       />
       <span>{influencer.name}</span>
+    </div>
+  );
+}
+
+function SponsoredLinkCopier({ productUrl, slugUtm }: { productUrl: string; slugUtm: string }) {
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+
+  const getSponsoredLink = () => {
+    if (productUrl && slugUtm) {
+      const separator = productUrl.includes("?") ? "&" : "?";
+      return `${productUrl}${separator}utm_campaign=${slugUtm}`;
+    }
+    return null;
+  };
+
+  const handleCopyLink = async () => {
+    const link = getSponsoredLink();
+    if (link) {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      toast({ title: "Lien sponsorisé copié" });
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const sponsoredLink = getSponsoredLink();
+
+  if (!sponsoredLink) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-2">
+      <label className="text-sm font-medium">Lien sponsorisé complet</label>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 bg-muted px-3 py-2 rounded-md text-xs break-all">
+          {sponsoredLink}
+        </code>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleCopyLink}
+          data-testid="button-copy-form-link"
+        >
+          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+        </Button>
+      </div>
     </div>
   );
 }
@@ -273,31 +358,42 @@ function CampaignFormDialog({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Influencer *</FormLabel>
-                  <Select
-                    value={field.value}
-                    onValueChange={field.onChange}
-                  >
-                    <FormControl>
-                      <SelectTrigger data-testid="select-influencer">
-                        <SelectValue placeholder="Select an influencer">
-                          {selectedInfluencer && (
-                            <InfluencerSelectItem influencer={selectedInfluencer} />
-                          )}
-                        </SelectValue>
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {influencers?.map((influencer) => (
-                        <SelectItem
-                          key={influencer.id}
-                          value={influencer.id}
-                          data-testid={`option-influencer-${influencer.id}`}
-                        >
-                          <InfluencerSelectItem influencer={influencer} />
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {campaign ? (
+                    <div className="flex items-center gap-3 p-2 bg-muted rounded-md opacity-70">
+                      <InfluencerAvatar
+                        name={campaign.influencer.name}
+                        imageUrl={campaign.influencer.profileImageUrl}
+                        size="sm"
+                      />
+                      <span className="text-sm">{campaign.influencer.name}</span>
+                    </div>
+                  ) : (
+                    <Select
+                      value={field.value}
+                      onValueChange={field.onChange}
+                    >
+                      <FormControl>
+                        <SelectTrigger data-testid="select-influencer">
+                          <SelectValue placeholder="Select an influencer">
+                            {selectedInfluencer && (
+                              <InfluencerSelectItem influencer={selectedInfluencer} />
+                            )}
+                          </SelectValue>
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {influencers?.map((influencer) => (
+                          <SelectItem
+                            key={influencer.id}
+                            value={influencer.id}
+                            data-testid={`option-influencer-${influencer.id}`}
+                          >
+                            <InfluencerSelectItem influencer={influencer} />
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                   <FormMessage />
                 </FormItem>
               )}
@@ -328,16 +424,11 @@ function CampaignFormDialog({
                 <FormItem>
                   <FormLabel>UTM Slug *</FormLabel>
                   <FormControl>
-                    <div className="flex items-center">
-                      <span className="text-sm text-muted-foreground mr-2">
-                        ?utm_campaign=
-                      </span>
-                      <Input
-                        placeholder="summer-collection-2026"
-                        {...field}
-                        data-testid="input-utm-slug"
-                      />
-                    </div>
+                    <Input
+                      placeholder="summer-collection-2026"
+                      {...field}
+                      data-testid="input-utm-slug"
+                    />
                   </FormControl>
                   <FormDescription>
                     Auto-generated from campaign name. You can modify it.
@@ -391,6 +482,11 @@ function CampaignFormDialog({
                   <FormMessage />
                 </FormItem>
               )}
+            />
+
+            <SponsoredLinkCopier 
+              productUrl={form.watch("productUrl") || ""} 
+              slugUtm={form.watch("slugUtm")} 
             />
 
             <div className="grid grid-cols-2 gap-4">
