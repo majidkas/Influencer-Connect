@@ -1,21 +1,20 @@
 import "@shopify/shopify-api/adapters/node";
 import { shopifyApi, ApiVersion } from "@shopify/shopify-api";
 
-const isDev = process.env.NODE_ENV === "development";
-
-// Use production URL first, then fall back to dev domain
 const getHostName = () => {
+  // Priorité : APP_URL (production), sinon Replit (dev), sinon défaut
+  if (process.env.APP_URL) {
+    return process.env.APP_URL.replace("https://", "").replace("http://", "");
+  }
   if (process.env.REPLIT_DEPLOYED_URL) {
     return process.env.REPLIT_DEPLOYED_URL.replace("https://", "").replace("http://", "");
   }
   if (process.env.REPLIT_DEV_DOMAIN) {
     return process.env.REPLIT_DEV_DOMAIN.replace("https://", "").replace("http://", "");
   }
-  return "influ-connect.replit.app";
+  return "api.influtrak.com";
 };
 
-// Scopes must match exactly what's configured in Partner Dashboard
-// Note: There are NO separate webhook scopes - webhooks use the data scopes (e.g. read_orders)
 const SCOPES = [
   "read_products",
   "read_orders", 
