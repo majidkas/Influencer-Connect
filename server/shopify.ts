@@ -14,21 +14,26 @@ const getHostName = () => {
   return "influ-connect.replit.app";
 };
 
+// Scopes must match exactly what's configured in Partner Dashboard
+const SCOPES = [
+  "read_products",
+  "read_orders", 
+  "read_discounts",
+  "read_pixels",
+  "write_pixels",
+  "read_script_tags",
+  "write_script_tags",
+  "read_customer_events",
+];
+
 export const shopify = shopifyApi({
   apiKey: process.env.SHOPIFY_API_KEY || "",
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
-  scopes: ["read_products", "read_orders", "read_discounts", "write_script_tags", "write_webhooks", "read_webhooks"],
+  scopes: SCOPES,
   hostName: getHostName(),
   hostScheme: "https",
   apiVersion: ApiVersion.January25,
   isEmbeddedApp: true,
 });
 
-export const SHOPIFY_SCOPES = [
-  "read_products",
-  "read_orders", 
-  "read_discounts",
-  "write_script_tags",
-  "write_webhooks",
-  "read_webhooks",
-].join(",");
+export const SHOPIFY_SCOPES = SCOPES.join(",");
