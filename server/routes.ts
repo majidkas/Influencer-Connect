@@ -1,11 +1,10 @@
 import { type Express, type Request, type Response, Router } from "express";
 import { type Server } from "http";
-import { shopify } from "./shopify"; // Chemin corrigé
-import { db } from "./db"; // Chemin corrigé
-import { shops, campaigns, influencers, events, orders } from "@shared/schema"; // Schema corrigé
-import { eq } from "drizzle-orm";
+import { shopify } from "./shopify";
+import { db } from "./db";
+import { shops, campaigns, influencers, events, orders } from "@shared/schema";
+import { eq, desc } from "drizzle-orm";
 
-// C'est cette fonction que server/index.ts cherche !
 export async function registerRoutes(server: Server, app: Express) {
   const router = Router();
 
@@ -19,7 +18,6 @@ export async function registerRoutes(server: Server, app: Express) {
     const sanitizedShop = shopify.utils.sanitizeShop(shop);
     if (!sanitizedShop) return res.status(400).send("Invalid shop");
 
-    // FIX IFRAME : On force la sortie de l'iframe pour le cookie First-Party
     const authUrl = await shopify.auth.begin({
       shop: sanitizedShop,
       callbackPath: "/api/shopify/callback",
@@ -45,15 +43,13 @@ export async function registerRoutes(server: Server, app: Express) {
 
       console.log(`[OAuth] Session validée pour ${shop}`);
 
-      // A. Enregistrer le Webhook Order
       try {
-        const webhookResponse = await shopify.webhooks.register({ session });
-        console.log("[OAuth] Webhooks registered", webhookResponse);
+        await shopify.webhooks.register({ session });
+        console.log("[OAuth] Webhooks registered");
       } catch (e) {
         console.error("[OAuth] Webhook error (non-fatal):", e);
       }
 
-      // B. Activer le Pixel via GraphQL (Auto-Connect)
       const client = new shopify.clients.Graphql({ session });
       try {
         await client.query({
@@ -64,7 +60,6 @@ export async function registerRoutes(server: Server, app: Express) {
         console.error("[OAuth] Pixel activation error:", e);
       }
 
-      // C. Sauvegarder le Shop
       await db.insert(shops).values({
         shopDomain: shop,
         accessToken: session.accessToken,
@@ -75,7 +70,6 @@ export async function registerRoutes(server: Server, app: Express) {
         set: { accessToken: session.accessToken, isInstalled: true, uninstalledAt: null },
       });
 
-      // D. Redirection vers l'App
       const host = req.query.host as string;
       if (host) {
           return res.redirect(shopify.utils.getEmbeddedAppUrl(req));
@@ -90,7 +84,7 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 2. TRACKING PIXEL (Réception des événements)
+  // 2. TRACKING PIXEL
   // ==============================================================================
   router.post("/api/tracking/event", async (req: Request, res: Response) => {
     res.header("Access-Control-Allow-Origin", "*");
@@ -99,7 +93,6 @@ export async function registerRoutes(server: Server, app: Express) {
       const eventData = req.body;
       console.log("📥 Pixel Event:", eventData.eventType);
 
-      // Sauvegarde l'événement
       await db.insert(events).values({
           eventType: eventData.eventType,
           sessionId: eventData.sessionId,
@@ -116,12 +109,14 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 3. WEBHOOKS (Réception des Commandes)
+  // 3. WEBHOOKS
   // ==============================================================================
   router.post("/api/webhooks/orders/create", async (req: Request, res: Response) => {
     try {
       console.log("💰 ORDER WEBHOOK RECEIVED!");
       const order = req.body;
+      // Ici, on pourrait ajouter le code pour lier la commande à la campagne via l'email ou le code promo
+      // Pour l'instant on log juste pour confirmer la réception
       console.log(`Order ID: ${order.id} - Total: ${order.total_price}`);
       res.status(200).send();
     } catch (error) {
@@ -131,23 +126,55 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 4. API DASHBOARD
+  // 4. API DASHBOARD (C'EST ICI QUE J'AI CORRIGÉ)
   // ==============================================================================
-  router.get("/api/campaigns", async (req, res) => {
-      const all = await db.select().from(campaigns);
-      res.json(all);
+  
+  // GET: Liste des campagnes (CORRIGÉ: On joint l'influenceur)
+  router.get("/api/campaigns", async (req: Request, res: Response) => {
+    try {
+      // 1. Récupérer toutes les campagnes
+      const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
+      
+      // 2. Récupérer tous les influenceurs
+      const allInfluencers = await db.select().from(influencers);
+
+      // 3. Associer manuellement (Jointure) pour que le frontend ne plante pas
+      const result = allCampaigns.map(campaign => {
+        const influencer = allInfluencers.find(inf => inf.id === campaign.influencerId);
+        return {
+          ...campaign,
+          influencer: influencer || null // On renvoie l'objet complet ou null si pas trouvé
+        };
+      });
+
+      res.json(result);
+    } catch (error) {
+      console.error("Fetch Campaigns Error:", error);
+      res.status(500).json({ error: "Failed to fetch campaigns" });
+    }
   });
 
-  router.post("/api/campaigns", async (req, res) => {
-      const { name, slug, discountType, discountValue } = req.body;
+  // GET: Liste des influenceurs
+  router.get("/api/influencers", async (req, res) => {
+    try {
+      const allInfluencers = await db.select().from(influencers).orderBy(desc(influencers.createdAt));
+      res.json(allInfluencers);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch influencers" });
+    }
+  });
+
+  // POST: Créer une campagne
+  router.post("/api/campaigns", async (req: Request, res: Response) => {
+      const { name, slug, discountType, discountValue, influencerId } = req.body;
       try {
         const newCampaign = await db.insert(campaigns).values({
             name,
             slugUtm: slug,
             discountType,
             discountValue,
+            influencerId: influencerId || null, // On gère le cas où l'ID est manquant
             status: 'active',
-            // Note: Idéalement il faut récupérer l'ID de l'influenceur ici
         }).returning();
         res.json(newCampaign[0]);
       } catch (e) {
@@ -156,14 +183,38 @@ export async function registerRoutes(server: Server, app: Express) {
       }
   });
 
+  // POST: Créer un influenceur
+  router.post("/api/influencers", async (req: Request, res: Response) => {
+    const { name, email, instagramHandle } = req.body;
+    try {
+      const newInfluencer = await db.insert(influencers).values({
+          name,
+          email,
+          instagramHandle
+      }).returning();
+      res.json(newInfluencer[0]);
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({error: "Create influencer failed"});
+    }
+  });
+
   router.get("/api/stats", async (req, res) => {
-      res.json({ totalInfluencers: 0, activeCampaigns: 0, totalRevenue: 0, averageRoi: 0 });
+      // Stats basiques pour éviter l'erreur 404
+      const infCount = await db.select({ count: campaigns.id }).from(influencers);
+      const campCount = await db.select({ count: campaigns.id }).from(campaigns);
+      
+      res.json({ 
+        totalInfluencers: infCount.length, 
+        activeCampaigns: campCount.length, 
+        totalRevenue: 0, 
+        averageRoi: 0 
+      });
   });
 
   router.get("/api/shopify/register-webhook", async (req, res) => {
       res.json({ message: "Use main install flow" });
   });
 
-  // Enregistrer le routeur dans l'application Express
   app.use(router);
 }
