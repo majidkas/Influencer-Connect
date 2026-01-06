@@ -3,7 +3,7 @@ import { type Server } from "http";
 import { shopify } from "./shopify";
 import { db } from "./db";
 import { shops, campaigns, influencers, events, orders } from "@shared/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 
 export async function registerRoutes(server: Server, app: Express) {
   const router = Router();
@@ -43,21 +43,25 @@ export async function registerRoutes(server: Server, app: Express) {
 
       console.log(`[OAuth] Session validée pour ${shop}`);
 
+      // 1. Enregistrement Webhooks
       try {
         await shopify.webhooks.register({ session });
       } catch (e) {
         console.error("[OAuth] Webhook error (non-fatal):", e);
       }
 
+      // 2. Connexion Pixel Automatique
       const client = new shopify.clients.Graphql({ session });
       try {
         await client.query({
           data: `mutation { webPixelCreate(webPixel: { settings: "{}" }) { userErrors { field message } } }`
         });
+        console.log("[OAuth] Pixel activated automatically ✅");
       } catch (e) {
         console.error("[OAuth] Pixel activation error:", e);
       }
 
+      // 3. Sauvegarde Shop
       await db.insert(shops).values({
         shopDomain: shop,
         accessToken: session.accessToken,
@@ -82,149 +86,166 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 2. API CAMPAGNES (AVEC LE FIX DU SLUG)
+  // 2. API DASHBOARD & STATS (LA PARTIE QUI TE MANQUAIT !)
+  // ==============================================================================
+  
+  // C'est cette route qui alimente le gros tableau du Dashboard
+  router.get("/api/campaigns/stats", async (req: Request, res: Response) => {
+    try {
+      const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
+      const allInfluencers = await db.select().from(influencers);
+      const allEvents = await db.select().from(events);
+
+      const stats = allCampaigns.map(campaign => {
+        // Retrouver l'influenceur
+        const influencer = allInfluencers.find(inf => inf.id === campaign.influencerId);
+        
+        // Filtrer les événements pour cette campagne (par Slug UTM)
+        const campaignEvents = allEvents.filter(e => e.utmCampaign === campaign.slugUtm);
+
+        // Calculs basiques
+        const clicks = campaignEvents.filter(e => e.eventType === 'page_view').length;
+        const orders = campaignEvents.filter(e => e.eventType === 'purchase').length;
+        const revenue = campaignEvents
+            .filter(e => e.eventType === 'purchase')
+            .reduce((acc, curr) => acc + (curr.revenue || 0), 0);
+        
+        // Coûts (Fixe + Commission)
+        const commissionCost = revenue * ((campaign.commissionPercent || 0) / 100);
+        const totalCost = (campaign.costFixed || 0) + commissionCost;
+        const roi = totalCost > 0 ? ((revenue - totalCost) / totalCost) * 100 : 0;
+
+        return {
+          ...campaign,
+          influencer: influencer || null, // Important pour l'affichage du nom
+          clicks,
+          addToCarts: campaignEvents.filter(e => e.eventType === 'add_to_cart').length,
+          orders,
+          promoCodeUsage: 0, // À implémenter plus tard
+          revenue,
+          totalCost,
+          roi
+        };
+      });
+
+      res.json(stats);
+    } catch (error) {
+      console.error("GET Campaign Stats Error:", error);
+      res.status(500).json({ error: "Failed to fetch stats" });
+    }
+  });
+
+  // Stats globales pour les cartes du haut
+  router.get("/api/stats", async (req, res) => {
+      try {
+        const infCount = await db.select({ count: sql<number>`count(*)` }).from(influencers);
+        const activeCampCount = await db.select({ count: sql<number>`count(*)` }).from(campaigns).where(eq(campaigns.status, 'active'));
+        
+        // Calcul du revenu total réel
+        const allPurchaseEvents = await db.select().from(events).where(eq(events.eventType, 'purchase'));
+        const totalRevenue = allPurchaseEvents.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
+
+        res.json({ 
+          totalInfluencers: Number(infCount[0].count), 
+          activeCampaigns: Number(activeCampCount[0].count), 
+          totalRevenue: totalRevenue, 
+          averageRoi: 0 // À affiner
+        });
+      } catch (e) {
+        console.error("GET Global Stats Error:", e);
+        res.json({ totalInfluencers: 0, activeCampaigns: 0, totalRevenue: 0, averageRoi: 0 });
+      }
+  });
+
+  // ==============================================================================
+  // 3. API CRUD (Gestion de base)
   // ==============================================================================
   
   router.get("/api/campaigns", async (req: Request, res: Response) => {
     try {
       const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
       const allInfluencers = await db.select().from(influencers);
-
-      const result = allCampaigns.map(campaign => {
-        const influencer = allInfluencers.find(inf => inf.id === campaign.influencerId);
-        return {
+      const result = allCampaigns.map(campaign => ({
           ...campaign,
-          influencer: influencer || null 
-        };
-      });
-
+          influencer: allInfluencers.find(inf => inf.id === campaign.influencerId) || null
+      }));
       res.json(result);
     } catch (error) {
-      console.error("GET Campaigns Error:", error);
-      res.status(500).json({ error: "Failed to fetch campaigns" });
+      res.status(500).json({ error: "Failed" });
     }
   });
 
-  // POST: Créer une campagne
   router.post("/api/campaigns", async (req: Request, res: Response) => {
       try {
-        // On récupère 'slug' ET 'slugUtm' au cas où le frontend change de nom
         const { name, slug, slugUtm, discountType, discountValue, influencerId } = req.body;
         
-        // 1. FIX DU SLUG : Si pas de slug, on le génère depuis le nom
-        // Ex: "Promo Hiver" -> "promo-hiver"
+        // FIX SLUG : Si vide, on génère
         let finalSlug = slug || slugUtm;
         if (!finalSlug || finalSlug.trim() === "") {
-             finalSlug = name.toLowerCase()
-                .replace(/ /g, '-')
-                .replace(/[^\w-]+/g, '');
-             // Sécurité si le nom est vide ou bizarre
+             finalSlug = name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
              if (!finalSlug) finalSlug = `campagne-${Date.now()}`;
         }
 
-        // 2. Gestion de l'ID Influenceur (éviter les erreurs UUID)
+        // FIX UUID : Si vide, on met null
         const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
 
         const newCampaign = await db.insert(campaigns).values({
             name,
-            slugUtm: finalSlug, // On utilise notre slug sécurisé
+            slugUtm: finalSlug,
             discountType,
             discountValue: discountValue ? parseFloat(discountValue) : 0,
             influencerId: cleanInfluencerId, 
             status: 'active',
         }).returning();
 
-        console.log("✅ Campaign created:", newCampaign[0]);
         res.json(newCampaign[0]);
       } catch (e) {
-        console.error("❌ CREATE Campaign Error:", e);
-        res.status(500).json({error: "Create failed. Check server logs."});
+        console.error("Create Campaign Error:", e);
+        res.status(500).json({error: "Create failed"});
       }
   });
 
-  // DELETE: Supprimer une campagne
   router.delete("/api/campaigns/:id", async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
-      await db.delete(campaigns).where(eq(campaigns.id, id));
-      console.log("🗑️ Campaign deleted:", id);
+      await db.delete(campaigns).where(eq(campaigns.id, req.params.id));
       res.json({ success: true });
     } catch (e) {
-      console.error("DELETE Campaign Error:", e);
       res.status(500).json({ error: "Delete failed" });
     }
   });
-
-  // ==============================================================================
-  // 3. API INFLUENCEURS
-  // ==============================================================================
 
   router.get("/api/influencers", async (req, res) => {
-    try {
-      const allInfluencers = await db.select().from(influencers).orderBy(desc(influencers.createdAt));
-      res.json(allInfluencers);
-    } catch (error) {
-      console.error("GET Influencers Error:", error);
-      res.status(500).json({ error: "Failed to fetch influencers" });
-    }
+    const all = await db.select().from(influencers).orderBy(desc(influencers.createdAt));
+    res.json(all);
   });
 
-  router.post("/api/influencers", async (req: Request, res: Response) => {
-    try {
-      const { name, email, instagramHandle } = req.body;
-      const newInfluencer = await db.insert(influencers).values({
-          name,
-          email,
-          instagramHandle
-      }).returning();
-      res.json(newInfluencer[0]);
-    } catch (e) {
-      console.error("CREATE Influencer Error:", e);
-      res.status(500).json({error: "Create influencer failed"});
-    }
+  router.post("/api/influencers", async (req, res) => {
+    const { name, email, instagramHandle } = req.body;
+    const newInf = await db.insert(influencers).values({ name, email, instagramHandle }).returning();
+    res.json(newInf[0]);
   });
-
+  
   router.delete("/api/influencers/:id", async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
-      await db.delete(influencers).where(eq(influencers.id, id));
+      await db.delete(influencers).where(eq(influencers.id, req.params.id));
       res.json({ success: true });
     } catch (e) {
-      console.error("DELETE Influencer Error:", e);
       res.status(500).json({ error: "Delete failed" });
     }
   });
 
   // ==============================================================================
-  // 4. STATS & TRACKING
+  // 4. TRACKING & WEBHOOKS
   // ==============================================================================
-
-  router.get("/api/stats", async (req, res) => {
-      try {
-        const infCount = await db.select({ id: influencers.id }).from(influencers);
-        const campCount = await db.select({ id: campaigns.id }).from(campaigns);
-        res.json({ 
-          totalInfluencers: infCount.length, 
-          activeCampaigns: campCount.length, 
-          totalRevenue: 0, 
-          averageRoi: 0 
-        });
-      } catch (e) {
-        console.error("GET Stats Error:", e);
-        res.json({ totalInfluencers: 0, activeCampaigns: 0, totalRevenue: 0, averageRoi: 0 });
-      }
-  });
 
   router.post("/api/tracking/event", async (req: Request, res: Response) => {
     res.header("Access-Control-Allow-Origin", "*");
     try {
       const eventData = req.body;
-      // Protection si le slug est manquant dans l'événement (pour éviter le crash DB)
-      // Note: Notre schéma permet utmCampaign en nullable ou text, donc ça devrait aller.
       await db.insert(events).values({
           eventType: eventData.eventType,
           sessionId: eventData.sessionId,
-          utmCampaign: eventData.slugUtm || "unknown", // Fallback de sécurité
+          utmCampaign: eventData.slugUtm || "unknown",
           payload: eventData,
           createdAt: new Date()
       });
