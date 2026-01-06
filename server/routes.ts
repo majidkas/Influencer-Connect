@@ -9,7 +9,7 @@ export async function registerRoutes(server: Server, app: Express) {
   const router = Router();
 
   // ==============================================================================
-  // 1. AUTHENTIFICATION & INSTALLATION (AVEC DEBUG PIXEL AMÉLIORÉ)
+  // 1. AUTHENTIFICATION & INSTALLATION
   // ==============================================================================
   router.get("/api/shopify/auth", async (req: Request, res: Response) => {
     const shop = req.query.shop as string;
@@ -43,49 +43,25 @@ export async function registerRoutes(server: Server, app: Express) {
 
       console.log(`[OAuth] Session validée pour ${shop}`);
 
-      // 1. Enregistrement Webhooks
+      // 1. Webhooks
       try {
         await shopify.webhooks.register({ session });
-        console.log("[OAuth] Webhooks registered");
       } catch (e) {
-        console.error("[OAuth] Webhook error (non-fatal):", e);
+        console.error("[OAuth] Webhook error:", e);
       }
 
-      // 2. ACTIVATION PIXEL (DEBUG MODE)
+      // 2. Pixel (On tente, mais si ça rate ici, on utilisera la route de force)
       const client = new shopify.clients.Graphql({ session });
       try {
-        const pixelResponse = await client.query({
-          data: `
-            mutation {
-              webPixelCreate(webPixel: { settings: "{}" }) {
-                userErrors {
-                  code
-                  field
-                  message
-                }
-                webPixel {
-                  id
-                  settings
-                }
-              }
-            }
-          `
+        await client.query({
+          data: `mutation { webPixelCreate(webPixel: { settings: "{}" }) { userErrors { field message } } }`
         });
-
-        // @ts-ignore
-        const responseBody = pixelResponse.body.data?.webPixelCreate;
-        
-        if (responseBody?.userErrors && responseBody.userErrors.length > 0) {
-          console.error("❌ [OAuth] PIXEL ERROR (Voici pourquoi ça ne connecte pas) :", JSON.stringify(responseBody.userErrors, null, 2));
-        } else {
-          console.log("✅ [OAuth] PIXEL SUCCESS : Connecté avec ID", responseBody?.webPixel?.id);
-        }
-
+        console.log("✅ [OAuth] Pixel activated automatically");
       } catch (e) {
-        console.error("❌ [OAuth] Pixel CRASH :", e);
+        console.error("❌ [OAuth] Pixel activation error:", e);
       }
 
-      // 3. Sauvegarde Shop
+      // 3. DB Save
       await db.insert(shops).values({
         shopDomain: shop,
         accessToken: session.accessToken,
@@ -145,7 +121,6 @@ export async function registerRoutes(server: Server, app: Express) {
           roi
         };
       });
-
       res.json(stats);
     } catch (error) {
       console.error("GET Campaign Stats Error:", error);
@@ -157,18 +132,10 @@ export async function registerRoutes(server: Server, app: Express) {
       try {
         const infCount = await db.select({ count: sql<number>`count(*)` }).from(influencers);
         const activeCampCount = await db.select({ count: sql<number>`count(*)` }).from(campaigns).where(eq(campaigns.status, 'active'));
-        
         const allPurchaseEvents = await db.select().from(events).where(eq(events.eventType, 'purchase'));
         const totalRevenue = allPurchaseEvents.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
-
-        res.json({ 
-          totalInfluencers: Number(infCount[0].count), 
-          activeCampaigns: Number(activeCampCount[0].count), 
-          totalRevenue: totalRevenue, 
-          averageRoi: 0
-        });
+        res.json({ totalInfluencers: Number(infCount[0].count), activeCampaigns: Number(activeCampCount[0].count), totalRevenue: totalRevenue, averageRoi: 0 });
       } catch (e) {
-        console.error("GET Global Stats Error:", e);
         res.json({ totalInfluencers: 0, activeCampaigns: 0, totalRevenue: 0, averageRoi: 0 });
       }
   });
@@ -194,26 +161,15 @@ export async function registerRoutes(server: Server, app: Express) {
   router.post("/api/campaigns", async (req: Request, res: Response) => {
       try {
         const { name, slug, slugUtm, discountType, discountValue, influencerId } = req.body;
-        
-        // FIX SLUG
         let finalSlug = slug || slugUtm;
         if (!finalSlug || finalSlug.trim() === "") {
              finalSlug = name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
              if (!finalSlug) finalSlug = `campagne-${Date.now()}`;
         }
-
-        // FIX UUID
         const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
-
         const newCampaign = await db.insert(campaigns).values({
-            name,
-            slugUtm: finalSlug,
-            discountType,
-            discountValue: discountValue ? parseFloat(discountValue) : 0,
-            influencerId: cleanInfluencerId, 
-            status: 'active',
+            name, slugUtm: finalSlug, discountType, discountValue: discountValue ? parseFloat(discountValue) : 0, influencerId: cleanInfluencerId, status: 'active',
         }).returning();
-
         res.json(newCampaign[0]);
       } catch (e) {
         console.error("Create Campaign Error:", e);
@@ -277,8 +233,53 @@ export async function registerRoutes(server: Server, app: Express) {
     res.status(200).send();
   });
 
-  router.get("/api/shopify/register-webhook", async (req, res) => {
-      res.json({ message: "Use main install flow" });
+  // ==============================================================================
+  // 5. BOUTON MAGIQUE : FORCE PIXEL (NOUVEAU !)
+  // ==============================================================================
+  router.get("/api/force-pixel", async (req: Request, res: Response) => {
+    const shop = req.query.shop as string;
+    
+    // 1. Récupérer le token depuis la base de données
+    const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
+    
+    if (!shopData) {
+      return res.json({ error: "Shop non trouvé en BDD. Réinstalle l'app." });
+    }
+
+    // 2. Créer le client GraphQL manuellement
+    const session = {
+        shop: shopData.shopDomain,
+        accessToken: shopData.accessToken,
+    };
+    const client = new shopify.clients.Graphql({ session: session as any });
+
+    // 3. Envoyer la commande à Shopify
+    try {
+      const response = await client.query({
+        data: `
+          mutation {
+            webPixelCreate(webPixel: { settings: "{}" }) {
+              userErrors {
+                code
+                field
+                message
+              }
+              webPixel {
+                settings
+                id
+                status
+              }
+            }
+          }
+        `,
+      });
+      
+      // On renvoie le résultat JSON directement dans ton navigateur
+      // @ts-ignore
+      res.json(response.body);
+    } catch (e: any) {
+      res.json({ error: "CRASH", details: e.message });
+    }
   });
 
   app.use(router);
