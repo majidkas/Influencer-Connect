@@ -1,19 +1,21 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, integer, real, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, real, timestamp, boolean, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-// Shopify shops table - stores shop credentials and tokens
+// Shopify shops table
 export const shops = pgTable("shops", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   shopDomain: text("shop_domain").notNull().unique(),
   accessToken: text("access_token").notNull(),
   scope: text("scope"),
   isActive: boolean("is_active").default(true),
+  isInstalled: boolean("is_installed").default(true),
   installedAt: timestamp("installed_at").defaultNow(),
+  uninstalledAt: timestamp("uninstalled_at"),
 });
 
-// Influencers table - Core CRM data
+// Influencers table
 export const influencers = pgTable("influencers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
@@ -25,11 +27,11 @@ export const influencers = pgTable("influencers", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Social accounts linked to influencers
+// Social accounts
 export const socialAccounts = pgTable("social_accounts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   influencerId: varchar("influencer_id").notNull().references(() => influencers.id, { onDelete: "cascade" }),
-  platform: text("platform").notNull(), // instagram, tiktok, snapchat
+  platform: text("platform").notNull(),
   handle: text("handle").notNull(),
   followersCount: integer("followers_count").default(0),
 });
@@ -37,28 +39,38 @@ export const socialAccounts = pgTable("social_accounts", {
 // Campaigns table
 export const campaigns = pgTable("campaigns", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  influencerId: varchar("influencer_id").notNull().references(() => influencers.id, { onDelete: "cascade" }),
+  influencerId: varchar("influencer_id"), // Rendu optionnel pour éviter les bugs si influenceur supprimé
   name: text("name").notNull(),
   slugUtm: text("slug_utm").notNull(),
   promoCode: text("promo_code"),
-  productUrl: text("product_url"), // Shopify product URL for the campaign
+  discountType: text("discount_type"),
+  discountValue: real("discount_value"),
+  productUrl: text("product_url"),
   costFixed: real("cost_fixed").default(0),
   commissionPercent: real("commission_percent").default(0),
-  status: text("status").default("active"), // active, paused, completed
+  status: text("status").default("active"),
+  shopId: integer("shop_id"), // Pour compatibilité future
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Events table for tracking
+// Events table (CORRIGÉE POUR LE PIXEL)
 export const events = pgTable("events", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  campaignId: varchar("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  // On utilise utmCampaign (texte) au lieu d'une Foreign Key stricte pour le logging brut
+  utmCampaign: text("utm_campaign"), 
   eventType: text("event_type").notNull(), // page_view, add_to_cart, purchase
-  sessionId: text("session_id"), // Unique visitor session ID
+  sessionId: text("session_id"),
   revenue: real("revenue").default(0),
-  geoCountry: text("geo_country"),
-  geoCity: text("geo_city"),
-  promoCodeUsed: boolean("promo_code_used").default(false), // True if attribution via code
-  source: text("source"), // utm, promo_code
+  payload: jsonb("payload"), // AJOUTÉ : Pour stocker tout le détail JSON du pixel
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Orders table (AJOUTÉE car importée dans routes.ts)
+export const orders = pgTable("orders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  shopifyOrderId: text("shopify_order_id").notNull().unique(),
+  totalPrice: real("total_price"),
+  currency: text("currency"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -80,68 +92,32 @@ export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
     fields: [campaigns.influencerId],
     references: [influencers.id],
   }),
-  events: many(events),
-}));
-
-export const eventsRelations = relations(events, ({ one }) => ({
-  campaign: one(campaigns, {
-    fields: [events.campaignId],
-    references: [campaigns.id],
-  }),
+  // Relation retirée temporairement pour events car on utilise utmCampaign (loose coupling)
 }));
 
 // Insert schemas
-export const insertShopSchema = createInsertSchema(shops).omit({
-  id: true,
-  installedAt: true,
-});
+export const insertShopSchema = createInsertSchema(shops);
+export const insertInfluencerSchema = createInsertSchema(influencers);
+export const insertSocialAccountSchema = createInsertSchema(socialAccounts);
+export const insertCampaignSchema = createInsertSchema(campaigns);
+export const insertEventSchema = createInsertSchema(events);
 
-export const insertInfluencerSchema = createInsertSchema(influencers).omit({
-  id: true,
-  createdAt: true,
-});
-
-export const insertSocialAccountSchema = createInsertSchema(socialAccounts).omit({
-  id: true,
-});
-
-export const insertCampaignSchema = createInsertSchema(campaigns).omit({
-  id: true,
-  createdAt: true,
-});
-
-export const insertEventSchema = createInsertSchema(events).omit({
-  id: true,
-  createdAt: true,
-});
-
-// Types
+// Types exportés
 export type Shop = typeof shops.$inferSelect;
 export type InsertShop = z.infer<typeof insertShopSchema>;
-
 export type Influencer = typeof influencers.$inferSelect;
 export type InsertInfluencer = z.infer<typeof insertInfluencerSchema>;
-
 export type SocialAccount = typeof socialAccounts.$inferSelect;
 export type InsertSocialAccount = z.infer<typeof insertSocialAccountSchema>;
-
 export type Campaign = typeof campaigns.$inferSelect;
 export type InsertCampaign = z.infer<typeof insertCampaignSchema>;
-
 export type Event = typeof events.$inferSelect;
 export type InsertEvent = z.infer<typeof insertEventSchema>;
 
-// Extended types for frontend
-export type InfluencerWithSocials = Influencer & {
-  socialAccounts: SocialAccount[];
-};
-
-export type CampaignWithInfluencer = Campaign & {
-  influencer: Influencer;
-};
-
+export type InfluencerWithSocials = Influencer & { socialAccounts: SocialAccount[] };
+export type CampaignWithInfluencer = Campaign & { influencer?: Influencer };
 export type CampaignWithStats = Campaign & {
-  influencer: Influencer;
+  influencer?: Influencer;
   clicks: number;
   addToCarts: number;
   orders: number;
