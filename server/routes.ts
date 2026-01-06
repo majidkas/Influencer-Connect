@@ -1,5 +1,6 @@
 import { type Express, type Request, type Response, Router } from "express";
 import { type Server } from "http";
+import { Session } from "@shopify/shopify-api"; // <--- AJOUT CRUCIAL ICI
 import { shopify } from "./shopify";
 import { db } from "./db";
 import { shops, campaigns, influencers, events, orders } from "@shared/schema";
@@ -50,7 +51,7 @@ export async function registerRoutes(server: Server, app: Express) {
         console.error("[OAuth] Webhook error:", e);
       }
 
-      // 2. Pixel (On tente, mais si ça rate ici, on utilisera la route de force)
+      // 2. Pixel (Tentative auto)
       const client = new shopify.clients.Graphql({ session });
       try {
         await client.query({
@@ -234,7 +235,7 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 5. BOUTON MAGIQUE : FORCE PIXEL (NOUVEAU !)
+  // 5. BOUTON MAGIQUE : FORCE PIXEL (CORRIGÉ !)
   // ==============================================================================
   router.get("/api/force-pixel", async (req: Request, res: Response) => {
     const shop = req.query.shop as string;
@@ -246,38 +247,44 @@ export async function registerRoutes(server: Server, app: Express) {
       return res.json({ error: "Shop non trouvé en BDD. Réinstalle l'app." });
     }
 
-    // 2. Créer le client GraphQL manuellement
-    const session = {
-        shop: shopData.shopDomain,
-        accessToken: shopData.accessToken,
-    };
-    const client = new shopify.clients.Graphql({ session: session as any });
-
-    // 3. Envoyer la commande à Shopify
     try {
-      const response = await client.query({
-        data: `
-          mutation {
-            webPixelCreate(webPixel: { settings: "{}" }) {
-              userErrors {
-                code
-                field
-                message
-              }
-              webPixel {
-                settings
-                id
-                status
-              }
+        // 2. Créer une VRAIE Session Shopify (Correction de l'erreur CRASH)
+        const session = new Session({
+            id: `offline_${shopData.shopDomain}`, // ID standard pour session offline
+            shop: shopData.shopDomain,
+            state: "state", // Valeur bidon requise
+            isOnline: false,
+            accessToken: shopData.accessToken,
+            scope: shopData.scope || "read_products", // Fallback si scope vide
+        });
+
+        // 3. Créer le client avec la bonne session
+        const client = new shopify.clients.Graphql({ session });
+
+        // 4. Envoyer la commande à Shopify
+        const response = await client.query({
+            data: `
+            mutation {
+                webPixelCreate(webPixel: { settings: "{}" }) {
+                userErrors {
+                    code
+                    field
+                    message
+                }
+                webPixel {
+                    settings
+                    id
+                    status
+                }
+                }
             }
-          }
-        `,
-      });
-      
-      // On renvoie le résultat JSON directement dans ton navigateur
-      // @ts-ignore
-      res.json(response.body);
+            `,
+        });
+        
+        // @ts-ignore
+        res.json(response.body);
     } catch (e: any) {
+      console.error(e);
       res.json({ error: "CRASH", details: e.message });
     }
   });
