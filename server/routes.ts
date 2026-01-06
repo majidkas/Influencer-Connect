@@ -250,7 +250,6 @@ export async function registerRoutes(server: Server, app: Express) {
   // ==============================================================================
 
   router.post("/api/tracking/event", async (req: Request, res: Response) => {
-    res.header("Access-Control-Allow-Origin", "*");
     try {
       const eventData = req.body;
       await db.insert(events).values({
