@@ -19,6 +19,7 @@ const SCOPES = [
   "read_products",
   "read_orders", 
   "read_discounts",
+  "write_discounts",
   "read_pixels",
   "write_pixels",
   "read_script_tags",
