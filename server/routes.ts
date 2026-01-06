@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
-import { shopify } from "./lib/shopify"; // Vérifie que le chemin est bon selon ton projet
-import { db } from "@db"; // Vérifie ton import de base de données
+import { shopify } from "./shopify"; // ✅ Juste le fichier à côté
+import { db } from "./db"; // ✅ Juste le fichier à côté
 import { shops, campaigns, influencers, events, orders } from "@shared/schema"; // Vérifie tes schémas
 import { eq, sql, desc } from "drizzle-orm";
 import { DataType } from "@shopify/shopify-api";
