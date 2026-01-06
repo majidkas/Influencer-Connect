@@ -1,73 +1,142 @@
 import { register } from "@shopify/web-pixels-extension";
 
 register(async ({ analytics, browser, settings, init }) => {
-  // 1. Configuration : Ton URL API
-  // IMPORTANT : Mets ton vrai domaine HTTPS ici
+  // 1. Configuration
   const API_URL = "https://api.influtrak.com/api/tracking/event";
+  const ACCOUNT_ID = settings.accountID || "unknown";
 
-  // 2. Récupérer l'UTM ou le Code Promo stocké
-  const getSessionId = async () => {
-    let id = await browser.localStorage.getItem("inf_session_id");
-    if (!id) {
-      id = `sess_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
-      await browser.localStorage.setItem("inf_session_id", id);
-    }
-    return id;
+  // 2. Helper pour générer un session ID
+  const generateSessionId = () => {
+    return `sess_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
   };
 
-  const getUtmCampaign = async () => {
-    // Vérifier l'URL actuelle
-    const url = new URL(init.context.document.location.href);
-    const utm = url.searchParams.get("utm_campaign");
-
-    if (utm) {
-      await browser.localStorage.setItem("inf_utm_campaign", utm);
-      return utm;
+  // 3. Récupérer l'UTM depuis l'URL actuelle
+  const getUtmFromUrl = () => {
+    try {
+      const url = init.context.document.location.href;
+      const urlObj = new URL(url);
+      return urlObj.searchParams.get("utm_campaign");
+    } catch (e) {
+      return null;
     }
-    return await browser.localStorage.getItem("inf_utm_campaign");
   };
 
-  // 3. Fonction générique pour envoyer les données (Types retirés ici)
+  // 4. Gestion du localStorage (async dans le sandbox Shopify)
+  let cachedSessionId = null;
+  let cachedUtmCampaign = null;
+
+  const initSession = async () => {
+    try {
+      // Essayer de récupérer depuis localStorage
+      cachedSessionId = await browser.localStorage.getItem("inf_session_id");
+      cachedUtmCampaign = await browser.localStorage.getItem("inf_utm_campaign");
+      
+      // Générer un nouveau session ID si nécessaire
+      if (!cachedSessionId) {
+        cachedSessionId = generateSessionId();
+        await browser.localStorage.setItem("inf_session_id", cachedSessionId);
+      }
+
+      // Vérifier l'UTM dans l'URL actuelle
+      const urlUtm = getUtmFromUrl();
+      if (urlUtm) {
+        cachedUtmCampaign = urlUtm;
+        await browser.localStorage.setItem("inf_utm_campaign", urlUtm);
+      }
+    } catch (e) {
+      // Fallback si localStorage échoue
+      if (!cachedSessionId) {
+        cachedSessionId = generateSessionId();
+      }
+      const urlUtm = getUtmFromUrl();
+      if (urlUtm) {
+        cachedUtmCampaign = urlUtm;
+      }
+    }
+  };
+
+  // Initialiser la session immédiatement
+  await initSession();
+
+  // 5. Fonction pour envoyer les événements
   const sendEvent = async (eventName, payload = {}) => {
-    const sessionId = await getSessionId();
-    const utmSlug = await getUtmCampaign();
-
-    // On n'envoie rien si pas de campagne identifiée (sauf pour l'achat)
-    if (!utmSlug && eventName !== "purchase") return;
+    // Toujours essayer de récupérer l'UTM depuis l'URL au cas où
+    const urlUtm = getUtmFromUrl();
+    if (urlUtm && urlUtm !== cachedUtmCampaign) {
+      cachedUtmCampaign = urlUtm;
+      try {
+        await browser.localStorage.setItem("inf_utm_campaign", urlUtm);
+      } catch (e) {}
+    }
 
     const body = {
       eventType: eventName,
-      sessionId: sessionId,
-      slugUtm: utmSlug,
+      sessionId: cachedSessionId,
+      slugUtm: cachedUtmCampaign || "direct",
+      accountId: ACCOUNT_ID,
+      timestamp: new Date().toISOString(),
       ...payload
     };
 
-    fetch(API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      keepalive: true
-    }).catch(err => console.error("Pixel Error:", err));
+    // Utiliser fetch avec les bonnes options pour le sandbox Shopify
+    try {
+      await fetch(API_URL, {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body),
+        keepalive: true
+      });
+    } catch (err) {
+      // Silencieux en production
+    }
   };
 
-  // 4. Abonnements aux événements
+  // 6. Abonnements aux événements
 
-  // A. Vue de page
-  analytics.subscribe("page_view", async (event) => {
+  // A. Vue de page - TOUJOURS envoyer (même sans UTM pour debug)
+  analytics.subscribe("page_viewed", async (event) => {
     await sendEvent("page_view", {
-      url: event.context.document.location.href
+      url: event.context.document.location.href,
+      referrer: event.context.document.referrer || null,
+      title: event.context.document.title || null
     });
   });
 
-  // B. Ajout au panier
+  // B. Produit vu
+  analytics.subscribe("product_viewed", async (event) => {
+    const product = event.data.productVariant;
+    await sendEvent("product_view", {
+      productId: product?.product?.id,
+      productTitle: product?.product?.title,
+      variantId: product?.id,
+      price: product?.price?.amount
+    });
+  });
+
+  // C. Ajout au panier
   analytics.subscribe("product_added_to_cart", async (event) => {
     await sendEvent("add_to_cart", {
       productId: event.data.cartLine?.merchandise?.product?.id,
-      quantity: event.data.cartLine?.quantity
+      productTitle: event.data.cartLine?.merchandise?.product?.title,
+      variantId: event.data.cartLine?.merchandise?.id,
+      quantity: event.data.cartLine?.quantity,
+      price: event.data.cartLine?.merchandise?.price?.amount
     });
   });
 
-  // C. Achat / Paiement
+  // D. Début du checkout
+  analytics.subscribe("checkout_started", async (event) => {
+    const checkout = event.data.checkout;
+    await sendEvent("checkout_started", {
+      totalPrice: checkout?.totalPrice?.amount,
+      currency: checkout?.totalPrice?.currencyCode,
+      itemCount: checkout?.lineItems?.length
+    });
+  });
+
+  // E. Achat complété
   analytics.subscribe("checkout_completed", async (event) => {
     const checkout = event.data.checkout;
 
@@ -77,8 +146,8 @@ register(async ({ analytics, browser, settings, init }) => {
       : null;
 
     await sendEvent("purchase", {
-      revenue: checkout.totalPrice.amount,
-      currency: checkout.totalPrice.currencyCode,
+      revenue: checkout.totalPrice?.amount,
+      currency: checkout.totalPrice?.currencyCode,
       orderId: checkout.order?.id,
       promoCode: promoCode,
       promoCodeUsed: !!promoCode,
