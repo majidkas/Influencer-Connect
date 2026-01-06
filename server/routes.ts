@@ -97,11 +97,10 @@ export async function registerRoutes(server: Server, app: Express) {
         },
       });
 
-      const host = req.query.host as string;
-      if (host) {
-        return res.redirect(shopify.utils.getEmbeddedAppUrl(req));
-      }
-      const redirectUrl = `https://admin.shopify.com/store/${shop.replace(".myshopify.com", "")}/apps/${process.env.SHOPIFY_API_KEY}`;
+      // Redirection vers l'app dans Shopify Admin
+      const shopName = shop.replace(".myshopify.com", "");
+      const redirectUrl = `https://admin.shopify.com/store/${shopName}/apps/${process.env.SHOPIFY_API_KEY}`;
+      console.log(`✅ [OAuth] Installation complete, redirecting to: ${redirectUrl}`);
       return res.redirect(redirectUrl);
 
     } catch (error) {
