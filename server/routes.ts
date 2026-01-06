@@ -9,7 +9,7 @@ export async function registerRoutes(server: Server, app: Express) {
   const router = Router();
 
   // ==============================================================================
-  // 1. AUTHENTIFICATION & INSTALLATION (NE PAS TOUCHER - ÇA MARCHE)
+  // 1. AUTHENTIFICATION & INSTALLATION
   // ==============================================================================
   router.get("/api/shopify/auth", async (req: Request, res: Response) => {
     const shop = req.query.shop as string;
@@ -82,16 +82,14 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 2. API CAMPAGNES (C'EST ICI QUE TU AVAIS DES PROBLÈMES)
+  // 2. API CAMPAGNES (AVEC LE FIX DU SLUG)
   // ==============================================================================
   
-  // GET: Récupérer toutes les campagnes (avec influenceur joint)
   router.get("/api/campaigns", async (req: Request, res: Response) => {
     try {
       const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
       const allInfluencers = await db.select().from(influencers);
 
-      // Jointure manuelle sécurisée
       const result = allCampaigns.map(campaign => {
         const influencer = allInfluencers.find(inf => inf.id === campaign.influencerId);
         return {
@@ -107,38 +105,49 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
-  // POST: Créer une campagne (CORRIGÉ : Gestion des ID vides)
+  // POST: Créer une campagne
   router.post("/api/campaigns", async (req: Request, res: Response) => {
       try {
-        const { name, slug, discountType, discountValue, influencerId } = req.body;
+        // On récupère 'slug' ET 'slugUtm' au cas où le frontend change de nom
+        const { name, slug, slugUtm, discountType, discountValue, influencerId } = req.body;
         
-        // IMPORTANT : Si influencerId est une chaine vide "", on le force à null
-        // Sinon Postgres plante car "" n'est pas un UUID valide.
+        // 1. FIX DU SLUG : Si pas de slug, on le génère depuis le nom
+        // Ex: "Promo Hiver" -> "promo-hiver"
+        let finalSlug = slug || slugUtm;
+        if (!finalSlug || finalSlug.trim() === "") {
+             finalSlug = name.toLowerCase()
+                .replace(/ /g, '-')
+                .replace(/[^\w-]+/g, '');
+             // Sécurité si le nom est vide ou bizarre
+             if (!finalSlug) finalSlug = `campagne-${Date.now()}`;
+        }
+
+        // 2. Gestion de l'ID Influenceur (éviter les erreurs UUID)
         const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
 
         const newCampaign = await db.insert(campaigns).values({
             name,
-            slugUtm: slug, // Attention: le front envoie 'slug', la DB veut 'slugUtm'
+            slugUtm: finalSlug, // On utilise notre slug sécurisé
             discountType,
             discountValue: discountValue ? parseFloat(discountValue) : 0,
             influencerId: cleanInfluencerId, 
             status: 'active',
         }).returning();
 
-        console.log("Campaign created:", newCampaign[0]);
+        console.log("✅ Campaign created:", newCampaign[0]);
         res.json(newCampaign[0]);
       } catch (e) {
-        console.error("CREATE Campaign Error:", e);
+        console.error("❌ CREATE Campaign Error:", e);
         res.status(500).json({error: "Create failed. Check server logs."});
       }
   });
 
-  // DELETE: Supprimer une campagne (AJOUTÉ : C'était manquant !)
+  // DELETE: Supprimer une campagne
   router.delete("/api/campaigns/:id", async (req: Request, res: Response) => {
     try {
       const { id } = req.params;
       await db.delete(campaigns).where(eq(campaigns.id, id));
-      console.log("Campaign deleted:", id);
+      console.log("🗑️ Campaign deleted:", id);
       res.json({ success: true });
     } catch (e) {
       console.error("DELETE Campaign Error:", e);
@@ -194,7 +203,6 @@ export async function registerRoutes(server: Server, app: Express) {
       try {
         const infCount = await db.select({ id: influencers.id }).from(influencers);
         const campCount = await db.select({ id: campaigns.id }).from(campaigns);
-        // (Tu pourras ajouter le calcul de revenu réel plus tard avec la table events)
         res.json({ 
           totalInfluencers: infCount.length, 
           activeCampaigns: campCount.length, 
@@ -211,12 +219,12 @@ export async function registerRoutes(server: Server, app: Express) {
     res.header("Access-Control-Allow-Origin", "*");
     try {
       const eventData = req.body;
-      // Nettoyage: Si utmSlug est null, on ne force pas l'insertion si la colonne l'interdit, 
-      // mais ici la DB l'autorise (text nullable)
+      // Protection si le slug est manquant dans l'événement (pour éviter le crash DB)
+      // Note: Notre schéma permet utmCampaign en nullable ou text, donc ça devrait aller.
       await db.insert(events).values({
           eventType: eventData.eventType,
           sessionId: eventData.sessionId,
-          utmCampaign: eventData.slugUtm,
+          utmCampaign: eventData.slugUtm || "unknown", // Fallback de sécurité
           payload: eventData,
           createdAt: new Date()
       });
@@ -227,7 +235,6 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
-  // Webhook Order (Minimaliste pour éviter 403)
   router.post("/api/webhooks/orders/create", async (req: Request, res: Response) => {
     console.log("💰 ORDER WEBHOOK RECEIVED");
     res.status(200).send();
