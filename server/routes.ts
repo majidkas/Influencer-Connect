@@ -60,9 +60,14 @@ export async function registerRoutes(server: Server, app: Express) {
           } as any
         });
 
+        // IMPORTANT: Les settings doivent correspondre au schéma dans shopify.extension.toml
+        // accountID est requis (min length = 1)
+        const accountID = session.shop.replace('.myshopify.com', '');
+        const settingsJson = JSON.stringify({ accountID: accountID });
+
         const pixelResponse = await client.request(`
           mutation {
-            webPixelCreate(webPixel: { settings: "{}" }) {
+            webPixelCreate(webPixel: { settings: ${JSON.stringify(settingsJson)} }) {
               userErrors {
                 code
                 field
@@ -294,9 +299,13 @@ export async function registerRoutes(server: Server, app: Express) {
       });
 
       // 3. Envoyer la mutation pour activer le pixel
+      // IMPORTANT: Les settings doivent correspondre au schéma dans shopify.extension.toml
+      const accountID = shopData.shopDomain.replace('.myshopify.com', '');
+      const settingsJson = JSON.stringify({ accountID: accountID });
+
       const response = await client.request(`
         mutation {
-          webPixelCreate(webPixel: { settings: "{}" }) {
+          webPixelCreate(webPixel: { settings: ${JSON.stringify(settingsJson)} }) {
             userErrors {
               code
               field
