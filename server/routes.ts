@@ -9,7 +9,7 @@ export async function registerRoutes(server: Server, app: Express) {
   const router = Router();
 
   // ==============================================================================
-  // 1. AUTHENTIFICATION & INSTALLATION
+  // 1. AUTHENTIFICATION & INSTALLATION (NE PAS TOUCHER - ÇA MARCHE)
   // ==============================================================================
   router.get("/api/shopify/auth", async (req: Request, res: Response) => {
     const shop = req.query.shop as string;
@@ -45,7 +45,6 @@ export async function registerRoutes(server: Server, app: Express) {
 
       try {
         await shopify.webhooks.register({ session });
-        console.log("[OAuth] Webhooks registered");
       } catch (e) {
         console.error("[OAuth] Webhook error (non-fatal):", e);
       }
@@ -55,7 +54,6 @@ export async function registerRoutes(server: Server, app: Express) {
         await client.query({
           data: `mutation { webPixelCreate(webPixel: { settings: "{}" }) { userErrors { field message } } }`
         });
-        console.log("[OAuth] Pixel activated automatically ✅");
       } catch (e) {
         console.error("[OAuth] Pixel activation error:", e);
       }
@@ -84,109 +82,87 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 2. TRACKING PIXEL
-  // ==============================================================================
-  router.post("/api/tracking/event", async (req: Request, res: Response) => {
-    res.header("Access-Control-Allow-Origin", "*");
-    
-    try {
-      const eventData = req.body;
-      console.log("📥 Pixel Event:", eventData.eventType);
-
-      await db.insert(events).values({
-          eventType: eventData.eventType,
-          sessionId: eventData.sessionId,
-          utmCampaign: eventData.slugUtm,
-          payload: eventData,
-          createdAt: new Date()
-      });
-
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Tracking Error:", error);
-      res.status(500).json({ error: "Failed" });
-    }
-  });
-
-  // ==============================================================================
-  // 3. WEBHOOKS
-  // ==============================================================================
-  router.post("/api/webhooks/orders/create", async (req: Request, res: Response) => {
-    try {
-      console.log("💰 ORDER WEBHOOK RECEIVED!");
-      const order = req.body;
-      // Ici, on pourrait ajouter le code pour lier la commande à la campagne via l'email ou le code promo
-      // Pour l'instant on log juste pour confirmer la réception
-      console.log(`Order ID: ${order.id} - Total: ${order.total_price}`);
-      res.status(200).send();
-    } catch (error) {
-      console.error("Webhook Error:", error);
-      res.status(500).send();
-    }
-  });
-
-  // ==============================================================================
-  // 4. API DASHBOARD (C'EST ICI QUE J'AI CORRIGÉ)
+  // 2. API CAMPAGNES (C'EST ICI QUE TU AVAIS DES PROBLÈMES)
   // ==============================================================================
   
-  // GET: Liste des campagnes (CORRIGÉ: On joint l'influenceur)
+  // GET: Récupérer toutes les campagnes (avec influenceur joint)
   router.get("/api/campaigns", async (req: Request, res: Response) => {
     try {
-      // 1. Récupérer toutes les campagnes
       const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
-      
-      // 2. Récupérer tous les influenceurs
       const allInfluencers = await db.select().from(influencers);
 
-      // 3. Associer manuellement (Jointure) pour que le frontend ne plante pas
+      // Jointure manuelle sécurisée
       const result = allCampaigns.map(campaign => {
         const influencer = allInfluencers.find(inf => inf.id === campaign.influencerId);
         return {
           ...campaign,
-          influencer: influencer || null // On renvoie l'objet complet ou null si pas trouvé
+          influencer: influencer || null 
         };
       });
 
       res.json(result);
     } catch (error) {
-      console.error("Fetch Campaigns Error:", error);
+      console.error("GET Campaigns Error:", error);
       res.status(500).json({ error: "Failed to fetch campaigns" });
     }
   });
 
-  // GET: Liste des influenceurs
+  // POST: Créer une campagne (CORRIGÉ : Gestion des ID vides)
+  router.post("/api/campaigns", async (req: Request, res: Response) => {
+      try {
+        const { name, slug, discountType, discountValue, influencerId } = req.body;
+        
+        // IMPORTANT : Si influencerId est une chaine vide "", on le force à null
+        // Sinon Postgres plante car "" n'est pas un UUID valide.
+        const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
+
+        const newCampaign = await db.insert(campaigns).values({
+            name,
+            slugUtm: slug, // Attention: le front envoie 'slug', la DB veut 'slugUtm'
+            discountType,
+            discountValue: discountValue ? parseFloat(discountValue) : 0,
+            influencerId: cleanInfluencerId, 
+            status: 'active',
+        }).returning();
+
+        console.log("Campaign created:", newCampaign[0]);
+        res.json(newCampaign[0]);
+      } catch (e) {
+        console.error("CREATE Campaign Error:", e);
+        res.status(500).json({error: "Create failed. Check server logs."});
+      }
+  });
+
+  // DELETE: Supprimer une campagne (AJOUTÉ : C'était manquant !)
+  router.delete("/api/campaigns/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      await db.delete(campaigns).where(eq(campaigns.id, id));
+      console.log("Campaign deleted:", id);
+      res.json({ success: true });
+    } catch (e) {
+      console.error("DELETE Campaign Error:", e);
+      res.status(500).json({ error: "Delete failed" });
+    }
+  });
+
+  // ==============================================================================
+  // 3. API INFLUENCEURS
+  // ==============================================================================
+
   router.get("/api/influencers", async (req, res) => {
     try {
       const allInfluencers = await db.select().from(influencers).orderBy(desc(influencers.createdAt));
       res.json(allInfluencers);
     } catch (error) {
+      console.error("GET Influencers Error:", error);
       res.status(500).json({ error: "Failed to fetch influencers" });
     }
   });
 
-  // POST: Créer une campagne
-  router.post("/api/campaigns", async (req: Request, res: Response) => {
-      const { name, slug, discountType, discountValue, influencerId } = req.body;
-      try {
-        const newCampaign = await db.insert(campaigns).values({
-            name,
-            slugUtm: slug,
-            discountType,
-            discountValue,
-            influencerId: influencerId || null, // On gère le cas où l'ID est manquant
-            status: 'active',
-        }).returning();
-        res.json(newCampaign[0]);
-      } catch (e) {
-        console.error(e);
-        res.status(500).json({error: "Create failed"});
-      }
-  });
-
-  // POST: Créer un influenceur
   router.post("/api/influencers", async (req: Request, res: Response) => {
-    const { name, email, instagramHandle } = req.body;
     try {
+      const { name, email, instagramHandle } = req.body;
       const newInfluencer = await db.insert(influencers).values({
           name,
           email,
@@ -194,22 +170,67 @@ export async function registerRoutes(server: Server, app: Express) {
       }).returning();
       res.json(newInfluencer[0]);
     } catch (e) {
-      console.error(e);
+      console.error("CREATE Influencer Error:", e);
       res.status(500).json({error: "Create influencer failed"});
     }
   });
 
+  router.delete("/api/influencers/:id", async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      await db.delete(influencers).where(eq(influencers.id, id));
+      res.json({ success: true });
+    } catch (e) {
+      console.error("DELETE Influencer Error:", e);
+      res.status(500).json({ error: "Delete failed" });
+    }
+  });
+
+  // ==============================================================================
+  // 4. STATS & TRACKING
+  // ==============================================================================
+
   router.get("/api/stats", async (req, res) => {
-      // Stats basiques pour éviter l'erreur 404
-      const infCount = await db.select({ count: campaigns.id }).from(influencers);
-      const campCount = await db.select({ count: campaigns.id }).from(campaigns);
-      
-      res.json({ 
-        totalInfluencers: infCount.length, 
-        activeCampaigns: campCount.length, 
-        totalRevenue: 0, 
-        averageRoi: 0 
+      try {
+        const infCount = await db.select({ id: influencers.id }).from(influencers);
+        const campCount = await db.select({ id: campaigns.id }).from(campaigns);
+        // (Tu pourras ajouter le calcul de revenu réel plus tard avec la table events)
+        res.json({ 
+          totalInfluencers: infCount.length, 
+          activeCampaigns: campCount.length, 
+          totalRevenue: 0, 
+          averageRoi: 0 
+        });
+      } catch (e) {
+        console.error("GET Stats Error:", e);
+        res.json({ totalInfluencers: 0, activeCampaigns: 0, totalRevenue: 0, averageRoi: 0 });
+      }
+  });
+
+  router.post("/api/tracking/event", async (req: Request, res: Response) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    try {
+      const eventData = req.body;
+      // Nettoyage: Si utmSlug est null, on ne force pas l'insertion si la colonne l'interdit, 
+      // mais ici la DB l'autorise (text nullable)
+      await db.insert(events).values({
+          eventType: eventData.eventType,
+          sessionId: eventData.sessionId,
+          utmCampaign: eventData.slugUtm,
+          payload: eventData,
+          createdAt: new Date()
       });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Tracking Error:", error);
+      res.status(500).json({ error: "Failed" });
+    }
+  });
+
+  // Webhook Order (Minimaliste pour éviter 403)
+  router.post("/api/webhooks/orders/create", async (req: Request, res: Response) => {
+    console.log("💰 ORDER WEBHOOK RECEIVED");
+    res.status(200).send();
   });
 
   router.get("/api/shopify/register-webhook", async (req, res) => {
