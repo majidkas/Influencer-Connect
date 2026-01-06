@@ -1,6 +1,5 @@
 import { type Express, type Request, type Response, Router } from "express";
 import { type Server } from "http";
-import { Session } from "@shopify/shopify-api"; // <--- AJOUT CRUCIAL ICI
 import { shopify } from "./shopify";
 import { db } from "./db";
 import { shops, campaigns, influencers, events, orders } from "@shared/schema";
@@ -47,35 +46,60 @@ export async function registerRoutes(server: Server, app: Express) {
       // 1. Webhooks
       try {
         await shopify.webhooks.register({ session });
+        console.log("✅ [OAuth] Webhooks registered");
       } catch (e) {
         console.error("[OAuth] Webhook error:", e);
       }
 
-      // 2. Pixel (Tentative auto)
-      const client = new shopify.clients.Graphql({ session });
+      // 2. Pixel (Tentative auto avec nouvelle syntaxe v12+)
       try {
-        await client.query({
-          data: `mutation { webPixelCreate(webPixel: { settings: "{}" }) { userErrors { field message } } }`
+        const client = new shopify.clients.Graphql({
+          session: {
+            shop: session.shop,
+            accessToken: session.accessToken,
+          } as any
         });
-        console.log("✅ [OAuth] Pixel activated automatically");
+
+        const pixelResponse = await client.request(`
+          mutation {
+            webPixelCreate(webPixel: { settings: "{}" }) {
+              userErrors {
+                code
+                field
+                message
+              }
+              webPixel {
+                id
+                settings
+              }
+            }
+          }
+        `);
+        console.log("✅ [OAuth] Pixel activated automatically:", pixelResponse);
       } catch (e) {
         console.error("❌ [OAuth] Pixel activation error:", e);
       }
 
-      // 3. DB Save
+      // 3. DB Save avec scope
       await db.insert(shops).values({
         shopDomain: shop,
         accessToken: session.accessToken,
+        scope: session.scope,
         isInstalled: true,
         installedAt: new Date(),
       }).onConflictDoUpdate({
         target: shops.shopDomain,
-        set: { accessToken: session.accessToken, isInstalled: true, uninstalledAt: null },
+        set: { 
+          accessToken: session.accessToken, 
+          scope: session.scope,
+          isInstalled: true, 
+          uninstalledAt: null 
+        },
       });
 
       const host = req.query.host as string;
       if (host) {
-          return res.redirect(shopify.utils.getEmbeddedAppUrl(req));
+        return res.redirect(shopify.utils.getEmbeddedAppUrl(req));
       }
       const redirectUrl = `https://admin.shopify.com/store/${shop.replace(".myshopify.com", "")}/apps/${process.env.SHOPIFY_API_KEY}`;
       return res.redirect(redirectUrl);
@@ -101,7 +125,7 @@ export async function registerRoutes(server: Server, app: Express) {
         const campaignEvents = allEvents.filter(e => e.utmCampaign === campaign.slugUtm);
 
         const clicks = campaignEvents.filter(e => e.eventType === 'page_view').length;
-        const orders = campaignEvents.filter(e => e.eventType === 'purchase').length;
+        const ordersCount = campaignEvents.filter(e => e.eventType === 'purchase').length;
         const revenue = campaignEvents
             .filter(e => e.eventType === 'purchase')
             .reduce((acc, curr) => acc + (curr.revenue || 0), 0);
@@ -115,7 +139,7 @@ export async function registerRoutes(server: Server, app: Express) {
           influencer: influencer || null,
           clicks,
           addToCarts: campaignEvents.filter(e => e.eventType === 'add_to_cart').length,
-          orders,
+          orders: ordersCount,
           promoCodeUsage: 0,
           revenue,
           totalCost,
@@ -130,15 +154,20 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   router.get("/api/stats", async (req, res) => {
-      try {
-        const infCount = await db.select({ count: sql<number>`count(*)` }).from(influencers);
-        const activeCampCount = await db.select({ count: sql<number>`count(*)` }).from(campaigns).where(eq(campaigns.status, 'active'));
-        const allPurchaseEvents = await db.select().from(events).where(eq(events.eventType, 'purchase'));
-        const totalRevenue = allPurchaseEvents.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
-        res.json({ totalInfluencers: Number(infCount[0].count), activeCampaigns: Number(activeCampCount[0].count), totalRevenue: totalRevenue, averageRoi: 0 });
-      } catch (e) {
-        res.json({ totalInfluencers: 0, activeCampaigns: 0, totalRevenue: 0, averageRoi: 0 });
-      }
+    try {
+      const infCount = await db.select({ count: sql<number>`count(*)` }).from(influencers);
+      const activeCampCount = await db.select({ count: sql<number>`count(*)` }).from(campaigns).where(eq(campaigns.status, 'active'));
+      const allPurchaseEvents = await db.select().from(events).where(eq(events.eventType, 'purchase'));
+      const totalRevenue = allPurchaseEvents.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
+      res.json({ 
+        totalInfluencers: Number(infCount[0].count), 
+        activeCampaigns: Number(activeCampCount[0].count), 
+        totalRevenue: totalRevenue, 
+        averageRoi: 0 
+      });
+    } catch (e) {
+      res.json({ totalInfluencers: 0, activeCampaigns: 0, totalRevenue: 0, averageRoi: 0 });
+    }
   });
 
   // ==============================================================================
@@ -160,22 +189,27 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   router.post("/api/campaigns", async (req: Request, res: Response) => {
-      try {
-        const { name, slug, slugUtm, discountType, discountValue, influencerId } = req.body;
-        let finalSlug = slug || slugUtm;
-        if (!finalSlug || finalSlug.trim() === "") {
-             finalSlug = name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
-             if (!finalSlug) finalSlug = `campagne-${Date.now()}`;
-        }
-        const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
-        const newCampaign = await db.insert(campaigns).values({
-            name, slugUtm: finalSlug, discountType, discountValue: discountValue ? parseFloat(discountValue) : 0, influencerId: cleanInfluencerId, status: 'active',
-        }).returning();
-        res.json(newCampaign[0]);
-      } catch (e) {
-        console.error("Create Campaign Error:", e);
-        res.status(500).json({error: "Create failed"});
+    try {
+      const { name, slug, slugUtm, discountType, discountValue, influencerId } = req.body;
+      let finalSlug = slug || slugUtm;
+      if (!finalSlug || finalSlug.trim() === "") {
+        finalSlug = name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
+        if (!finalSlug) finalSlug = `campagne-${Date.now()}`;
       }
+      const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
+      const newCampaign = await db.insert(campaigns).values({
+        name, 
+        slugUtm: finalSlug, 
+        discountType, 
+        discountValue: discountValue ? parseFloat(discountValue) : 0, 
+        influencerId: cleanInfluencerId, 
+        status: 'active',
+      }).returning();
+      res.json(newCampaign[0]);
+    } catch (e) {
+      console.error("Create Campaign Error:", e);
+      res.status(500).json({ error: "Create failed" });
+    }
   });
 
   router.delete("/api/campaigns/:id", async (req: Request, res: Response) => {
@@ -216,11 +250,11 @@ export async function registerRoutes(server: Server, app: Express) {
     try {
       const eventData = req.body;
       await db.insert(events).values({
-          eventType: eventData.eventType,
-          sessionId: eventData.sessionId,
-          utmCampaign: eventData.slugUtm || "unknown",
-          payload: eventData,
-          createdAt: new Date()
+        eventType: eventData.eventType,
+        sessionId: eventData.sessionId,
+        utmCampaign: eventData.slugUtm || "unknown",
+        payload: eventData,
+        createdAt: new Date()
       });
       res.json({ success: true });
     } catch (error) {
@@ -235,58 +269,87 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 5. BOUTON MAGIQUE : FORCE PIXEL (CORRIGÉ !)
+  // 5. FORCE PIXEL - Syntaxe corrigée pour Shopify API v12+
   // ==============================================================================
   router.get("/api/force-pixel", async (req: Request, res: Response) => {
     const shop = req.query.shop as string;
     
+    if (!shop) {
+      return res.json({ error: "Missing shop parameter" });
+    }
+
     // 1. Récupérer le token depuis la base de données
     const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
     
-    if (!shopData) {
-      return res.json({ error: "Shop non trouvé en BDD. Réinstalle l'app." });
+    if (!shopData || !shopData.accessToken) {
+      return res.json({ error: "Shop non trouvé en BDD ou pas de token. Réinstalle l'app." });
     }
 
     try {
-        // 2. Créer une VRAIE Session Shopify (Correction de l'erreur CRASH)
-        const session = new Session({
-            id: `offline_${shopData.shopDomain}`, // ID standard pour session offline
-            shop: shopData.shopDomain,
-            state: "state", // Valeur bidon requise
-            isOnline: false,
-            accessToken: shopData.accessToken,
-            scope: shopData.scope || "read_products", // Fallback si scope vide
-        });
+      // 2. Créer le client GraphQL avec la nouvelle syntaxe v12+
+      const client = new shopify.clients.Graphql({
+        session: {
+          shop: shopData.shopDomain,
+          accessToken: shopData.accessToken,
+        } as any
+      });
 
-        // 3. Créer le client avec la bonne session
-        const client = new shopify.clients.Graphql({ session });
-
-        // 4. Envoyer la commande à Shopify
-        const response = await client.query({
-            data: `
-            mutation {
-                webPixelCreate(webPixel: { settings: "{}" }) {
-                userErrors {
-                    code
-                    field
-                    message
-                }
-                webPixel {
-                    settings
-                    id
-                    status
-                }
-                }
+      // 3. Envoyer la mutation pour activer le pixel
+      const response = await client.request(`
+        mutation {
+          webPixelCreate(webPixel: { settings: "{}" }) {
+            userErrors {
+              code
+              field
+              message
             }
-            `,
-        });
-        
-        // @ts-ignore
-        res.json(response.body);
+            webPixel {
+              id
+              settings
+            }
+          }
+        }
+      `);
+      
+      console.log("✅ Force Pixel Response:", response);
+      res.json(response);
     } catch (e: any) {
-      console.error(e);
-      res.json({ error: "CRASH", details: e.message });
+      console.error("❌ Force Pixel Error:", e);
+      res.json({ error: "CRASH", details: e.message, stack: e.stack });
     }
+  });
+
+  // ==============================================================================
+  // 6. DEBUG & HEALTH CHECK
+  // ==============================================================================
+  router.get("/api/webhooks/test", (req: Request, res: Response) => {
+    res.json({ 
+      status: "OK", 
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || "development"
+    });
+  });
+
+  router.get("/api/debug/shop", async (req: Request, res: Response) => {
+    const shop = req.query.shop as string;
+    if (!shop) {
+      return res.json({ error: "Missing shop parameter" });
+    }
+    
+    const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
+    
+    if (!shopData) {
+      return res.json({ error: "Shop not found", shop });
+    }
+    
+    res.json({
+      shop: shopData.shopDomain,
+      hasToken: !!shopData.accessToken,
+      tokenPreview: shopData.accessToken ? `${shopData.accessToken.substring(0, 10)}...` : null,
+      scope: shopData.scope,
+      isInstalled: shopData.isInstalled,
+      installedAt: shopData.installedAt
+    });
   });
 
   app.use(router);
