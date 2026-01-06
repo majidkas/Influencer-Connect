@@ -1,858 +1,256 @@
-import type { Express } from "express";
-import { createServer, type Server } from "http";
-import { storage } from "./storage";
-import { insertInfluencerSchema, insertCampaignSchema, insertEventSchema } from "@shared/schema";
-import { z } from "zod";
-import { shopify, SHOPIFY_SCOPES } from "./shopify";
-import crypto from "crypto";
+import { Router, type Request, type Response } from "express";
+import { shopify } from "./lib/shopify"; // Vérifie que le chemin est bon selon ton projet
+import { db } from "@db"; // Vérifie ton import de base de données
+import { shops, campaigns, influencers, events, orders } from "@db/schema"; // Vérifie tes schémas
+import { eq, sql, desc } from "drizzle-orm";
+import { DataType } from "@shopify/shopify-api";
 
-function verifyShopifyWebhook(rawBody: string, hmacHeader: string): boolean {
-  const secret = process.env.SHOPIFY_API_SECRET;
-  if (!secret || !hmacHeader) return false;
-  
-  const generatedHmac = crypto
-    .createHmac("sha256", secret)
-    .update(rawBody, "utf8")
-    .digest("base64");
-  
-  return crypto.timingSafeEqual(
-    Buffer.from(generatedHmac),
-    Buffer.from(hmacHeader)
-  );
-}
+const router = Router();
 
-export async function registerRoutes(
-  httpServer: Server,
-  app: Express
-): Promise<Server> {
-  // ============ SHOPIFY APP ENTRY POINT ============
-  // This handles when Shopify loads our app (legacy install flow)
-  app.get("/api/shopify/install", async (req, res) => {
-    try {
-      const shop = req.query.shop as string;
-      console.log("[Install] App loaded for shop:", shop);
-      
-      if (!shop) {
-        return res.status(400).send("Missing shop parameter");
-      }
+// ==============================================================================
+// 1. ROUTE D'AUTHENTIFICATION (DÉMARRAGE)
+// ==============================================================================
+router.get("/api/shopify/auth", async (req: Request, res: Response) => {
+  const shop = req.query.shop as string;
 
-      // Check if shop is already authenticated
-      const shopData = await storage.getShopByDomain(shop);
-      if (shopData && shopData.accessToken) {
-        // Shop is authenticated, redirect to embedded app
-        const shopName = shop.replace(".myshopify.com", "");
-        return res.redirect(`https://admin.shopify.com/store/${shopName}/apps/app-influ`);
-      }
-
-      // Shop not authenticated, start OAuth
-      console.log("[Install] Shop not authenticated, redirecting to OAuth");
-      return res.redirect(`/api/shopify/auth?shop=${shop}`);
-    } catch (error) {
-      console.error("[Install] Error:", error);
-      res.status(500).send("Installation error");
-    }
-  });
-
-  // ============ SHOPIFY OAUTH ============
-  app.get("/api/shopify/auth", async (req, res) => {
-    try {
-      const shop = req.query.shop as string;
-      console.log("[OAuth] Starting auth for shop:", shop);
-      console.log("[OAuth] Configured scopes:", SHOPIFY_SCOPES);
-      
-      if (!shop) {
-        return res.status(400).json({ message: "Missing shop parameter" });
-      }
-
-      const sanitizedShop = shopify.utils.sanitizeShop(shop, true);
-      if (!sanitizedShop) {
-        return res.status(400).json({ message: "Invalid shop parameter" });
-      }
-
-      const authUrl = await shopify.auth.begin({
-        shop: sanitizedShop,
-        callbackPath: "/api/shopify/callback",
-        isOnline: false,
-        rawRequest: req,
-        rawResponse: res,
-      });
-
-
-    } catch (error) {
-      console.error("[OAuth] Shopify auth error:", error);
-      res.status(500).json({ message: "Failed to start Shopify authentication" });
-    }
-  });
-
-  app.get("/api/shopify/callback", async (req, res) => {
-    try {
-      console.log("[OAuth Callback] Processing callback...");
-      console.log("[OAuth Callback] Query params:", JSON.stringify(req.query));
-      
-      const callback = await shopify.auth.callback({
-        rawRequest: req,
-        rawResponse: res,
-      });
-
-      const { session } = callback;
-      console.log("[OAuth Callback] Session received for shop:", session.shop);
-      console.log("[OAuth Callback] Access token received:", !!session.accessToken);
-      console.log("[OAuth Callback] Granted scopes:", session.scope);
-      
-      // Save shop to database - this is critical
-      await storage.upsertShop({
-        shopDomain: session.shop,
-        accessToken: session.accessToken || "",
-        scope: session.scope || "",
-      });
-      console.log("[OAuth Callback] Shop saved to database");
-
-      // Get app URL for registering script tag and webhook
-      const appUrl = process.env.REPLIT_DEPLOYED_URL || `https://${req.get("host")}`;
-      
-      // Register script tag for tracking pixel (non-blocking)
-      try {
-        const client = new shopify.clients.Rest({ session });
-        
-        // First, check if script tag already exists
-        const existingScripts = await client.get({
-          path: "script_tags",
-        });
-        
-        const pixelUrl = `${appUrl}/api/tracking/pixel.js`;
-        const scriptExists = (existingScripts.body as any).script_tags?.some(
-          (tag: any) => tag.src === pixelUrl
-        );
-        
-        if (!scriptExists) {
-          await client.post({
-            path: "script_tags",
-            data: {
-              script_tag: {
-                event: "onload",
-                src: pixelUrl,
-              },
-            },
-          });
-          console.log(`[OAuth Callback] Script tag registered for ${session.shop}`);
-        } else {
-          console.log(`[OAuth Callback] Script tag already exists for ${session.shop}`);
-        }
-      } catch (scriptError: any) {
-        console.error("[OAuth Callback] Script tag setup error (non-fatal):", scriptError?.message || scriptError);
-      }
-        
-      // Register webhook for order creation (non-blocking)
-      try {
-        const client = new shopify.clients.Rest({ session });
-        const existingWebhooks = await client.get({
-          path: "webhooks",
-        });
-        
-        const webhookUrl = `${appUrl}/api/webhooks/orders/create`;
-        const webhookExists = (existingWebhooks.body as any).webhooks?.some(
-          (hook: any) => hook.address === webhookUrl && hook.topic === "orders/create"
-        );
-        
-        if (!webhookExists) {
-          await client.post({
-            path: "webhooks",
-            data: {
-              webhook: {
-                topic: "orders/create",
-                address: webhookUrl,
-                format: "json",
-              },
-            },
-          });
-          console.log(`[OAuth Callback] Webhook registered for ${session.shop}`);
-        } else {
-          console.log(`[OAuth Callback] Webhook already exists for ${session.shop}`);
-        }
-      } catch (webhookError: any) {
-        console.error("[OAuth Callback] Webhook setup error (non-fatal):", webhookError?.message || webhookError);
-      }
-
-      // For embedded apps, redirect back to Shopify admin
-      const shopName = session.shop.replace(".myshopify.com", "");
-      const embeddedUrl = `https://admin.shopify.com/store/${shopName}/apps/app-influ`;
-      console.log("[OAuth Callback] Redirecting to embedded URL:", embeddedUrl);
-      return res.redirect(embeddedUrl);
-    } catch (error: any) {
-      console.error("[OAuth Callback] CRITICAL ERROR:", error?.message || error);
-      console.error("[OAuth Callback] Error stack:", error?.stack);
-      res.status(500).send("Installation failed. Please try again or contact support.");
-    }
-  });
-
-  app.get("/api/shopify/shop", async (req, res) => {
-    try {
-      const shop = req.query.shop as string;
-      if (!shop) {
-        return res.status(400).json({ message: "Missing shop parameter" });
-      }
-
-      const shopData = await storage.getShopByDomain(shop);
-      if (!shopData) {
-        return res.status(404).json({ message: "Shop not found", needsAuth: true });
-      }
-
-      res.json({ shop: shopData.shopDomain, isActive: shopData.isActive });
-    } catch (error) {
-      console.error("Error fetching shop:", error);
-      res.status(500).json({ message: "Failed to fetch shop" });
-    }
-  });
-
-  // ============ MANUAL WEBHOOK REGISTRATION ============
-  // Endpoint pour enregistrer le webhook manuellement
-  app.get("/api/shopify/register-webhook", async (req, res) => {
-    try {
-      const shopDomain = req.query.shop as string || "clikn01.myshopify.com";
-      console.log("[Register Webhook] Starting for shop:", shopDomain);
-
-      const shopData = await storage.getShopByDomain(shopDomain);
-      if (!shopData || !shopData.accessToken) {
-        return res.status(404).json({ 
-          success: false, 
-          message: "Shop not found or not authenticated. Please reinstall the app." 
-        });
-      }
-
-      const appUrl = process.env.REPLIT_DEPLOYED_URL || `https://${req.get("host")}`;
-      const webhookUrl = `${appUrl}/api/webhooks/orders/create`;
-      
-      const session = {
-        shop: shopData.shopDomain,
-        accessToken: shopData.accessToken,
-      };
-      
-      const client = new shopify.clients.Rest({ session: session as any });
-      
-      // Check existing webhooks
-      const existingWebhooks = await client.get({ path: "webhooks" });
-      const webhooks = (existingWebhooks.body as any).webhooks || [];
-      
-      console.log("[Register Webhook] Existing webhooks:", webhooks.length);
-      
-      const webhookExists = webhooks.some(
-        (hook: any) => hook.topic === "orders/create"
-      );
-      
-      if (webhookExists) {
-        // Delete existing webhook to recreate with correct URL
-        const existingHook = webhooks.find((hook: any) => hook.topic === "orders/create");
-        if (existingHook && existingHook.address !== webhookUrl) {
-          await client.delete({ path: `webhooks/${existingHook.id}` });
-          console.log("[Register Webhook] Deleted old webhook:", existingHook.id);
-        } else {
-          return res.json({ 
-            success: true, 
-            message: "Webhook already exists with correct URL",
-            webhookUrl 
-          });
-        }
-      }
-      
-      // Create new webhook
-      const response = await client.post({
-        path: "webhooks",
-        data: {
-          webhook: { 
-            topic: "orders/create", 
-            address: webhookUrl, 
-            format: "json" 
-          },
-        },
-      });
-      
-      console.log("[Register Webhook] Webhook created successfully");
-      
-      res.json({ 
-        success: true, 
-        message: "Webhook registered successfully!",
-        webhookUrl,
-        webhookId: (response.body as any).webhook?.id
-      });
-    } catch (error: any) {
-      console.error("[Register Webhook] Error:", error?.message || error);
-      res.status(500).json({ 
-        success: false, 
-        message: "Failed to register webhook", 
-        error: error?.message 
-      });
-    }
-  });
-
-  // Endpoint to manually reinstall tracking for existing shops
-  app.post("/api/shopify/setup-tracking", async (req, res) => {
-    try {
-      const { shopDomain } = req.body;
-      if (!shopDomain) {
-        return res.status(400).json({ message: "Missing shopDomain" });
-      }
-
-      const shopData = await storage.getShopByDomain(shopDomain);
-      if (!shopData || !shopData.accessToken) {
-        return res.status(404).json({ message: "Shop not found or not authenticated" });
-      }
-
-      const appUrl = process.env.REPLIT_DEPLOYED_URL || process.env.REPLIT_DEV_DOMAIN || `https://${req.get("host")}`;
-      
-      const session = {
-        shop: shopData.shopDomain,
-        accessToken: shopData.accessToken,
-      };
-      
-      const client = new shopify.clients.Rest({ session: session as any });
-      
-      const results = { scriptTag: false, webhook: false, errors: [] as string[] };
-      
-      // Register script tag
-      try {
-        const existingScripts = await client.get({ path: "script_tags" });
-        const pixelUrl = `${appUrl}/api/tracking/pixel.js`;
-        const scriptExists = (existingScripts.body as any).script_tags?.some(
-          (tag: any) => tag.src === pixelUrl
-        );
-        
-        if (!scriptExists) {
-          await client.post({
-            path: "script_tags",
-            data: {
-              script_tag: { event: "onload", src: pixelUrl },
-            },
-          });
-        }
-        results.scriptTag = true;
-      } catch (e: any) {
-        results.errors.push(`Script tag error: ${e.message}`);
-      }
-      
-      // Register webhook
-      try {
-        const existingWebhooks = await client.get({ path: "webhooks" });
-        const webhookUrl = `${appUrl}/api/webhooks/orders/create`;
-        const webhookExists = (existingWebhooks.body as any).webhooks?.some(
-          (hook: any) => hook.address === webhookUrl && hook.topic === "orders/create"
-        );
-        
-        if (!webhookExists) {
-          await client.post({
-            path: "webhooks",
-            data: {
-              webhook: { topic: "orders/create", address: webhookUrl, format: "json" },
-            },
-          });
-        }
-        results.webhook = true;
-      } catch (e: any) {
-        results.errors.push(`Webhook error: ${e.message}`);
-      }
-      
-      res.json({ 
-        success: results.scriptTag && results.webhook, 
-        results,
-        appUrl,
-        pixelUrl: `${appUrl}/api/tracking/pixel.js`,
-        webhookUrl: `${appUrl}/api/webhooks/orders/create`
-      });
-    } catch (error: any) {
-      console.error("Setup tracking error:", error);
-      res.status(500).json({ message: "Failed to setup tracking", error: error.message });
-    }
-  });
-
-  // ============ TRACKING PIXEL ============
-  app.get("/api/tracking/pixel.js", async (req, res) => {
-    const appUrl = process.env.REPLIT_DEPLOYED_URL || `https://${req.get("host")}`;
-    
-    const script = `
-(function() {
-  var APP_URL = "${appUrl}";
-  
-  function getSessionId() {
-    var sessionId = localStorage.getItem('_inf_session');
-    if (!sessionId) {
-      sessionId = 'sess_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
-      localStorage.setItem('_inf_session', sessionId);
-    }
-    return sessionId;
+  if (!shop) {
+    return res.status(400).send("Missing shop parameter");
   }
-  
-  function getUtmCampaign() {
-    var params = new URLSearchParams(window.location.search);
-    var utmCampaign = params.get('utm_campaign');
-    if (utmCampaign) {
-      localStorage.setItem('_inf_utm', utmCampaign);
-      localStorage.setItem('_inf_utm_ts', Date.now().toString());
-    }
-    return localStorage.getItem('_inf_utm');
+
+  // Nettoyage du nom de domaine
+  const sanitizedShop = shopify.utils.sanitizeShop(shop);
+  if (!sanitizedShop) {
+    return res.status(400).send("Invalid shop parameter");
   }
-  
-  function trackEvent(eventType, data) {
-    var utmCampaign = getUtmCampaign();
-    if (!utmCampaign) return;
-    
-    var payload = {
-      slugUtm: utmCampaign,
-      sessionId: getSessionId(),
-      eventType: eventType,
-      revenue: data.revenue || 0,
-      geoCountry: data.country || '',
-      geoCity: data.city || '',
-      promoCodeUsed: data.promoCode ? true : false,
-      promoCode: data.promoCode || null
-    };
-    
-    fetch(APP_URL + '/api/tracking/event', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      mode: 'cors'
-    }).catch(function(e) { console.log('Tracking error:', e); });
-  }
-  
-  var utmCampaign = getUtmCampaign();
-  if (utmCampaign) {
-    trackEvent('page_view', {});
-  }
-  
-  window.InfluencerTracker = {
-    trackAddToCart: function(data) { trackEvent('add_to_cart', data || {}); },
-    trackPurchase: function(data) { trackEvent('purchase', data || {}); }
-  };
-})();
-`;
-    
-    res.setHeader("Content-Type", "application/javascript");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.send(script);
+
+  // FIX CRITIQUE : ÉJECTION DE L'IFRAME
+  // Si la requête vient de l'intérieur de Shopify (iframe), on force le navigateur
+  // à recharger la page "Top Level" pour autoriser les cookies First-Party.
+  // Sans ça, l'installation échoue silencieusement sur Chrome/Safari.
+  const authUrl = await shopify.auth.begin({
+    shop: sanitizedShop,
+    callbackPath: "/api/shopify/callback",
+    isOnline: false,
+    rawRequest: req,
+    rawResponse: res,
   });
 
-  app.post("/api/tracking/event", async (req, res) => {
-    try {
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  // On renvoie un petit bout de HTML qui force la redirection
+  return res.status(200).send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <script>
+          window.top.location.href = "${authUrl}";
+        </script>
+      </head>
+      <body>
+        <h1>Redirecting to Shopify Authentication...</h1>
+      </body>
+    </html>
+  `);
+});
 
-      const { 
-        slugUtm, promoCode, sessionId, eventType, revenue, 
-        geoCountry, geoCity, promoCodeUsed,
-        productId, productTitle, quantity, currency, orderId, source 
-      } = req.body;
-      
-      console.log("[Tracking] Event received:", { slugUtm, eventType, sessionId, revenue, source: source || "legacy" });
-
-      let campaign = null;
-      if (slugUtm) {
-        campaign = await storage.getCampaignByUtmSlug(slugUtm);
-        console.log("[Tracking] Campaign lookup by UTM:", slugUtm, "-> Found:", !!campaign);
-      }
-      if (!campaign && promoCode) {
-        campaign = await storage.getCampaignByPromoCode(promoCode);
-        console.log("[Tracking] Campaign lookup by promo:", promoCode, "-> Found:", !!campaign);
-      }
-
-      if (!campaign) {
-        console.log("[Tracking] No campaign found for:", { slugUtm, promoCode });
-        return res.status(404).json({ message: "Campaign not found" });
-      }
-
-      const event = await storage.createEvent({
-        campaignId: campaign.id,
-        eventType,
-        sessionId: sessionId || null,
-        revenue: revenue || 0,
-        geoCountry: geoCountry || null,
-        geoCity: geoCity || null,
-        promoCodeUsed: promoCodeUsed || false,
-        source: source || (promoCodeUsed ? "promo_code" : "utm"),
-      });
-
-      console.log("[Tracking] Event created:", event.id, "for campaign:", campaign.name);
-      res.status(201).json({ success: true, eventId: event.id });
-    } catch (error) {
-      console.error("Error tracking event:", error);
-      res.status(500).json({ message: "Failed to track event" });
-    }
-  });
-
-  app.options("/api/tracking/event", (req, res) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    res.status(204).send();
-  });
-
-  // ============ SHOPIFY WEBHOOKS ============
-  app.post("/api/webhooks/orders/create", async (req, res) => {
-    try {
-      console.log("[Webhook] ========== ORDER RECEIVED ==========");
-      
-      const hmacHeader = req.get("X-Shopify-Hmac-Sha256") || "";
-      const rawBody = JSON.stringify(req.body);
-      
-      // Verify webhook signature (skip in dev if needed)
-      const isValidSignature = verifyShopifyWebhook(rawBody, hmacHeader);
-      console.log("[Webhook] Signature valid:", isValidSignature);
-      
-      if (!isValidSignature && process.env.NODE_ENV === "production") {
-        console.error("[Webhook] Signature verification failed");
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-
-      const order = req.body;
-      console.log("[Webhook] Order ID:", order.id);
-      console.log("[Webhook] Order Number:", order.order_number);
-      console.log("[Webhook] Total Price:", order.total_price);
-      console.log("[Webhook] Discount Codes:", order.discount_codes);
-      console.log("[Webhook] Note Attributes:", order.note_attributes);
-      console.log("[Webhook] Cart Token:", order.cart_token);
-      console.log("[Webhook] Landing Site:", order.landing_site);
-
-      let attributedCampaign = null;
-      let attributionSource = "unknown";
-
-      // ============ PRIORITY 1: Check Discount Codes ============
-      const discountCodes = order.discount_codes || [];
-      for (const discount of discountCodes) {
-        const campaign = await storage.getCampaignByPromoCode(discount.code);
-        if (campaign) {
-          console.log("[Webhook] ATTRIBUTION via Promo Code:", discount.code, "-> Campaign:", campaign.name);
-          attributedCampaign = campaign;
-          attributionSource = "promo_code";
-          break;
-        }
-      }
-
-      // ============ PRIORITY 2: Check Note Attributes for UTM ============
-      if (!attributedCampaign) {
-        const noteAttributes = order.note_attributes || [];
-        for (const attr of noteAttributes) {
-          if (attr.name === "utm_campaign" || attr.name === "_inf_utm" || attr.name === "influencer_campaign") {
-            const campaign = await storage.getCampaignByUtmSlug(attr.value);
-            if (campaign) {
-              console.log("[Webhook] ATTRIBUTION via Note Attribute:", attr.name, "=", attr.value, "-> Campaign:", campaign.name);
-              attributedCampaign = campaign;
-              attributionSource = "utm_note";
-              break;
-            }
-          }
-        }
-      }
-
-      // ============ PRIORITY 3: Check Landing Site URL for UTM ============
-      if (!attributedCampaign && order.landing_site) {
-        try {
-          const landingUrl = new URL(order.landing_site, "https://example.com");
-          const utmCampaign = landingUrl.searchParams.get("utm_campaign");
-          if (utmCampaign) {
-            const campaign = await storage.getCampaignByUtmSlug(utmCampaign);
-            if (campaign) {
-              console.log("[Webhook] ATTRIBUTION via Landing Site UTM:", utmCampaign, "-> Campaign:", campaign.name);
-              attributedCampaign = campaign;
-              attributionSource = "utm_landing";
-            }
-          }
-        } catch (e) {
-          console.log("[Webhook] Could not parse landing_site URL");
-        }
-      }
-
-      // ============ PRIORITY 4: Check recent sessions (last 30 days) ============
-      if (!attributedCampaign && order.customer?.email) {
-        // Try to find a recent session from this customer
-        // This is a fallback - in production you might want to store customer<->session mappings
-        console.log("[Webhook] No direct attribution found, checking customer history...");
-      }
-
-      // ============ CREATE EVENT IF ATTRIBUTED ============
-      if (attributedCampaign) {
-        const event = await storage.createEvent({
-          campaignId: attributedCampaign.id,
-          eventType: "purchase",
-          revenue: parseFloat(order.total_price) || 0,
-          promoCodeUsed: attributionSource === "promo_code",
-          source: attributionSource,
-          geoCountry: order.billing_address?.country || order.shipping_address?.country || null,
-          geoCity: order.billing_address?.city || order.shipping_address?.city || null,
-        });
-        
-        console.log("[Webhook] ✅ PURCHASE EVENT CREATED:", event.id);
-        console.log("[Webhook] Campaign:", attributedCampaign.name);
-        console.log("[Webhook] Revenue:", order.total_price);
-        console.log("[Webhook] Attribution Source:", attributionSource);
-      } else {
-        console.log("[Webhook] ❌ No campaign attribution found for this order");
-      }
-
-      console.log("[Webhook] ========== END ==========");
-      res.status(200).json({ success: true, attributed: !!attributedCampaign });
-    } catch (error) {
-      console.error("[Webhook] ERROR:", error);
-      res.status(500).json({ message: "Webhook processing failed" });
-    }
-  });
-
-  // ============ TEST ENDPOINTS ============
-  // Endpoint pour tester si le webhook fonctionne
-  app.get("/api/webhooks/test", (req, res) => {
-    res.json({ 
-      status: "ok", 
-      message: "Webhook endpoint is reachable",
-      timestamp: new Date().toISOString()
+// ==============================================================================
+// 2. ROUTE DE CALLBACK (RETOUR APRÈS INSTALLATION)
+// ==============================================================================
+router.get("/api/shopify/callback", async (req: Request, res: Response) => {
+  try {
+    // 1. Validation de l'authentification OAuth
+    const callback = await shopify.auth.callback({
+      rawRequest: req,
+      rawResponse: res,
     });
-  });
 
-  // Endpoint pour simuler un webhook (pour debug)
-  app.post("/api/webhooks/test-order", async (req, res) => {
+    const { session } = callback;
+    const shop = session.shop;
+
+    console.log(`[OAuth Callback] Session validée pour : ${shop}`);
+
+    // 2. Initialisation du client GraphQL pour configurer le shop
+    const client = new shopify.clients.Graphql({ session });
+
+    // --------------------------------------------------------
+    // A. ENREGISTREMENT DES WEBHOOKS
+    // --------------------------------------------------------
     try {
-      const { utmSlug, promoCode, revenue } = req.body;
-      
-      console.log("[Test Webhook] Simulating order with:", { utmSlug, promoCode, revenue });
-      
-      let campaign = null;
-      let source = "test";
-      
-      if (promoCode) {
-        campaign = await storage.getCampaignByPromoCode(promoCode);
-        source = "promo_code";
-      }
-      if (!campaign && utmSlug) {
-        campaign = await storage.getCampaignByUtmSlug(utmSlug);
-        source = "utm";
-      }
-      
-      if (!campaign) {
-        return res.status(404).json({ 
-          success: false, 
-          message: "No campaign found for provided UTM slug or promo code" 
-        });
-      }
-      
-      const event = await storage.createEvent({
-        campaignId: campaign.id,
-        eventType: "purchase",
-        revenue: revenue || 99.99,
-        promoCodeUsed: source === "promo_code",
-        source: source,
+      await shopify.webhooks.register({ session });
+      console.log(`[OAuth Callback] Webhooks enregistrés avec succès`);
+    } catch (whError) {
+      console.error(`[OAuth Callback] Erreur Webhooks (non bloquant): ${whError}`);
+    }
+
+    // --------------------------------------------------------
+    // B. ACTIVATION AUTOMATIQUE DU WEB PIXEL (NOUVEAU !)
+    // --------------------------------------------------------
+    // C'est ici qu'on force le pixel à passer en "Connecté"
+    try {
+      const pixelResponse = await client.query({
+        data: `
+          mutation {
+            webPixelCreate(webPixel: { settings: "{}" }) {
+              userErrors {
+                code
+                field
+                message
+              }
+              webPixel {
+                settings
+                id
+              }
+            }
+          }
+        `,
       });
       
-      res.json({ 
-        success: true, 
-        message: "Test purchase event created",
-        eventId: event.id,
-        campaignName: campaign.name,
-        revenue: revenue || 99.99
-      });
-    } catch (error: any) {
-      console.error("[Test Webhook] Error:", error);
-      res.status(500).json({ success: false, error: error.message });
-    }
-  });
-
-  // ============ STATS ============
-  app.get("/api/stats", async (req, res) => {
-    try {
-      const stats = await storage.getStats();
-      res.json(stats);
-    } catch (error) {
-      console.error("Error fetching stats:", error);
-      res.status(500).json({ message: "Failed to fetch stats" });
-    }
-  });
-
-  // ============ INFLUENCERS ============
-  app.get("/api/influencers", async (req, res) => {
-    try {
-      const influencers = await storage.getInfluencers();
-      res.json(influencers);
-    } catch (error) {
-      console.error("Error fetching influencers:", error);
-      res.status(500).json({ message: "Failed to fetch influencers" });
-    }
-  });
-
-  app.get("/api/influencers/:id", async (req, res) => {
-    try {
-      const influencer = await storage.getInfluencer(req.params.id);
-      if (!influencer) {
-        return res.status(404).json({ message: "Influencer not found" });
+      // @ts-ignore
+      const userErrors = pixelResponse.body.data?.webPixelCreate?.userErrors;
+      if (userErrors && userErrors.length > 0) {
+        console.error("[OAuth Callback] Erreur activation Pixel:", userErrors);
+      } else {
+        console.log("[OAuth Callback] ✅ Web Pixel activé et CONNECTÉ automatiquement !");
       }
-      res.json(influencer);
-    } catch (error) {
-      console.error("Error fetching influencer:", error);
-      res.status(500).json({ message: "Failed to fetch influencer" });
+    } catch (pixelError) {
+      console.error(`[OAuth Callback] Erreur fatale Pixel: ${pixelError}`);
     }
-  });
 
-  app.post("/api/influencers", async (req, res) => {
-    try {
-      const schema = insertInfluencerSchema.extend({
-        socialAccounts: z.array(z.object({
-          platform: z.string(),
-          handle: z.string(),
-          followersCount: z.number().optional(),
-        })).optional(),
-      });
+    // --------------------------------------------------------
+    // C. SAUVEGARDE EN BASE DE DONNÉES
+    // --------------------------------------------------------
+    await db.insert(shops).values({
+      shopDomain: shop,
+      accessToken: session.accessToken,
+      isInstalled: true,
+      installedAt: new Date(),
+    }).onConflictDoUpdate({
+      target: shops.shopDomain,
+      set: { 
+        accessToken: session.accessToken, 
+        isInstalled: true,
+        uninstalledAt: null
+      },
+    });
+    console.log(`[OAuth Callback] Shop sauvegardé en BDD`);
 
-      const data = schema.parse(req.body);
-      const { socialAccounts, ...influencerData } = data;
-
-      const influencer = await storage.createInfluencer(influencerData, socialAccounts);
-      res.status(201).json(influencer);
-    } catch (error) {
-      console.error("Error creating influencer:", error);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid data", errors: error.errors });
-      }
-      res.status(500).json({ message: "Failed to create influencer" });
+    // --------------------------------------------------------
+    // D. REDIRECTION FINALE VERS L'APP
+    // --------------------------------------------------------
+    // On renvoie l'utilisateur vers son dashboard Shopify
+    const host = req.query.host as string;
+    const redirectUrl = `https://admin.shopify.com/store/${shop.replace(".myshopify.com", "")}/apps/${process.env.SHOPIFY_API_KEY}`;
+    
+    // Si on a le paramètre host (nouveau format), on l'utilise
+    if (host) {
+        return res.redirect(shopify.utils.getEmbeddedAppUrl(req));
     }
-  });
+    
+    return res.redirect(redirectUrl);
 
-  app.patch("/api/influencers/:id", async (req, res) => {
-    try {
-      const schema = insertInfluencerSchema.partial().extend({
-        socialAccounts: z.array(z.object({
-          platform: z.string(),
-          handle: z.string(),
-          followersCount: z.number().optional(),
-        })).optional(),
-      });
+  } catch (error) {
+    console.error(`[OAuth Callback] CRITICAL ERROR: ${error}`);
+    return res.status(500).send("Installation failed. Check server logs.");
+  }
+});
 
-      const data = schema.parse(req.body);
-      const { socialAccounts, ...influencerData } = data;
+// ==============================================================================
+// 3. API ROUTES (POUR TON FRONTEND)
+// ==============================================================================
 
-      const influencer = await storage.updateInfluencer(req.params.id, influencerData, socialAccounts);
-      if (!influencer) {
-        return res.status(404).json({ message: "Influencer not found" });
-      }
-      res.json(influencer);
-    } catch (error) {
-      console.error("Error updating influencer:", error);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid data", errors: error.errors });
-      }
-      res.status(500).json({ message: "Failed to update influencer" });
-    }
-  });
+// Route pour vérifier si le shop est connecté
+router.get("/api/me", async (req, res) => {
+    // Note: Dans une vraie app, tu devrais vérifier session.shop ici via un middleware
+    res.json({ status: "ok" });
+});
 
-  app.delete("/api/influencers/:id", async (req, res) => {
-    try {
-      const success = await storage.deleteInfluencer(req.params.id);
-      if (!success) {
-        return res.status(404).json({ message: "Influencer not found" });
-      }
-      res.status(204).send();
-    } catch (error) {
-      console.error("Error deleting influencer:", error);
-      res.status(500).json({ message: "Failed to delete influencer" });
-    }
-  });
+// GET: Liste des campagnes
+router.get("/api/campaigns", async (req: Request, res: Response) => {
+  try {
+    const allCampaigns = await db.select().from(campaigns);
+    res.json(allCampaigns);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch campaigns" });
+  }
+});
 
-  // ============ CAMPAIGNS ============
-  app.get("/api/campaigns", async (req, res) => {
-    try {
-      const campaigns = await storage.getCampaigns();
-      res.json(campaigns);
-    } catch (error) {
-      console.error("Error fetching campaigns:", error);
-      res.status(500).json({ message: "Failed to fetch campaigns" });
-    }
-  });
+// POST: Créer une campagne
+router.post("/api/campaigns", async (req: Request, res: Response) => {
+  try {
+    const { name, slug, discountType, discountValue } = req.body;
+    // (Ajoute ici la validation de session si nécessaire pour récupérer le shopId)
+    
+    const newCampaign = await db.insert(campaigns).values({
+        name,
+        slug,
+        discountType,
+        discountValue,
+        status: 'active',
+        // Attention: Assure-toi d'avoir un shopId valide ici, sinon mets-en un par défaut ou récupère-le de la session
+        shopId: 1 // Temporaire si tu n'as pas encore le middleware de session sur l'API
+    }).returning();
+    
+    res.json(newCampaign[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Failed to create campaign" });
+  }
+});
 
-  app.get("/api/campaigns/stats", async (req, res) => {
-    try {
-      const campaigns = await storage.getCampaignsWithStats();
-      res.json(campaigns);
-    } catch (error) {
-      console.error("Error fetching campaign stats:", error);
-      res.status(500).json({ message: "Failed to fetch campaign stats" });
-    }
-  });
+// GET: Stats Dashboard
+router.get("/api/stats", async (req: Request, res: Response) => {
+  try {
+    // Exemples de requêtes agrégées
+    const totalInfluencers = await db.select({ count: sql<number>`count(*)` }).from(influencers);
+    const activeCampaigns = await db.select({ count: sql<number>`count(*)` }).from(campaigns).where(eq(campaigns.status, 'active'));
+    
+    res.json({
+      totalInfluencers: totalInfluencers[0].count,
+      activeCampaigns: activeCampaigns[0].count,
+      totalRevenue: 0, // À connecter avec ta table orders
+      averageRoi: 0
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch stats" });
+  }
+});
 
-  app.get("/api/campaigns/:id", async (req, res) => {
-    try {
-      const campaign = await storage.getCampaign(req.params.id);
-      if (!campaign) {
-        return res.status(404).json({ message: "Campaign not found" });
-      }
-      res.json(campaign);
-    } catch (error) {
-      console.error("Error fetching campaign:", error);
-      res.status(500).json({ message: "Failed to fetch campaign" });
-    }
-  });
+// ==============================================================================
+// 4. ROUTE DE TRACKING (POUR LE PIXEL)
+// ==============================================================================
+router.post("/api/tracking/event", async (req: Request, res: Response) => {
+  // CORS: Autoriser tout le monde (puisque ça vient des navigateurs clients)
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).send("OK");
+  }
 
-  app.post("/api/campaigns", async (req, res) => {
-    try {
-      const data = insertCampaignSchema.parse(req.body);
-      const campaign = await storage.createCampaign(data);
-      res.status(201).json(campaign);
-    } catch (error) {
-      console.error("Error creating campaign:", error);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid data", errors: error.errors });
-      }
-      res.status(500).json({ message: "Failed to create campaign" });
-    }
-  });
+  try {
+    const eventData = req.body;
+    console.log("📥 Pixel Event Received:", eventData.eventType, eventData);
 
-  app.patch("/api/campaigns/:id", async (req, res) => {
-    try {
-      const data = insertCampaignSchema.partial().parse(req.body);
-      const campaign = await storage.updateCampaign(req.params.id, data);
-      if (!campaign) {
-        return res.status(404).json({ message: "Campaign not found" });
-      }
-      res.json(campaign);
-    } catch (error) {
-      console.error("Error updating campaign:", error);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid data", errors: error.errors });
-      }
-      res.status(500).json({ message: "Failed to update campaign" });
-    }
-  });
+    // Sauvegarde brute de l'événement
+    await db.insert(events).values({
+        eventType: eventData.eventType,
+        sessionId: eventData.sessionId,
+        utmCampaign: eventData.slugUtm,
+        payload: eventData, // Assure-toi que ta colonne payload est de type JSONB
+        createdAt: new Date()
+    });
 
-  app.delete("/api/campaigns/:id", async (req, res) => {
-    try {
-      const success = await storage.deleteCampaign(req.params.id);
-      if (!success) {
-        return res.status(404).json({ message: "Campaign not found" });
-      }
-      res.status(204).send();
-    } catch (error) {
-      console.error("Error deleting campaign:", error);
-      res.status(500).json({ message: "Failed to delete campaign" });
-    }
-  });
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Tracking Error:", error);
+    res.status(500).json({ error: "Tracking failed" });
+  }
+});
 
-  // ============ EVENTS ============
-  app.post("/api/events", async (req, res) => {
-    try {
-      const data = insertEventSchema.parse(req.body);
-      const event = await storage.createEvent(data);
-      res.status(201).json(event);
-    } catch (error) {
-      console.error("Error creating event:", error);
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ message: "Invalid data", errors: error.errors });
-      }
-      res.status(500).json({ message: "Failed to create event" });
-    }
-  });
+// Helper Route: Ré-enregistrer les webhooks manuellement
+router.get("/api/shopify/register-webhook", async (req, res) => {
+    const shop = req.query.shop as string;
+    // Note: Ceci est simplifié, normalement il faut charger la session depuis la DB
+    // Cette route sert surtout au debug immédiat
+    res.json({ message: "Utilise l'installation normale pour enregistrer les webhooks" });
+});
 
-  app.get("/api/campaigns/:id/events", async (req, res) => {
-    try {
-      const events = await storage.getEventsByCampaign(req.params.id);
-      res.json(events);
-    } catch (error) {
-      console.error("Error fetching events:", error);
-      res.status(500).json({ message: "Failed to fetch events" });
-    }
-  });
-
-  return httpServer;
-}
+export default router;
