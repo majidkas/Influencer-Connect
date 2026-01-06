@@ -9,7 +9,7 @@ export async function registerRoutes(server: Server, app: Express) {
   const router = Router();
 
   // ==============================================================================
-  // 1. AUTHENTIFICATION & INSTALLATION
+  // 1. AUTHENTIFICATION & INSTALLATION (AVEC DEBUG PIXEL AMÉLIORÉ)
   // ==============================================================================
   router.get("/api/shopify/auth", async (req: Request, res: Response) => {
     const shop = req.query.shop as string;
@@ -46,19 +46,43 @@ export async function registerRoutes(server: Server, app: Express) {
       // 1. Enregistrement Webhooks
       try {
         await shopify.webhooks.register({ session });
+        console.log("[OAuth] Webhooks registered");
       } catch (e) {
         console.error("[OAuth] Webhook error (non-fatal):", e);
       }
 
-      // 2. Connexion Pixel Automatique
+      // 2. ACTIVATION PIXEL (DEBUG MODE)
       const client = new shopify.clients.Graphql({ session });
       try {
-        await client.query({
-          data: `mutation { webPixelCreate(webPixel: { settings: "{}" }) { userErrors { field message } } }`
+        const pixelResponse = await client.query({
+          data: `
+            mutation {
+              webPixelCreate(webPixel: { settings: "{}" }) {
+                userErrors {
+                  code
+                  field
+                  message
+                }
+                webPixel {
+                  id
+                  settings
+                }
+              }
+            }
+          `
         });
-        console.log("[OAuth] Pixel activated automatically ✅");
+
+        // @ts-ignore
+        const responseBody = pixelResponse.body.data?.webPixelCreate;
+        
+        if (responseBody?.userErrors && responseBody.userErrors.length > 0) {
+          console.error("❌ [OAuth] PIXEL ERROR (Voici pourquoi ça ne connecte pas) :", JSON.stringify(responseBody.userErrors, null, 2));
+        } else {
+          console.log("✅ [OAuth] PIXEL SUCCESS : Connecté avec ID", responseBody?.webPixel?.id);
+        }
+
       } catch (e) {
-        console.error("[OAuth] Pixel activation error:", e);
+        console.error("❌ [OAuth] Pixel CRASH :", e);
       }
 
       // 3. Sauvegarde Shop
@@ -86,10 +110,9 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 2. API DASHBOARD & STATS (LA PARTIE QUI TE MANQUAIT !)
+  // 2. API DASHBOARD & STATS
   // ==============================================================================
   
-  // C'est cette route qui alimente le gros tableau du Dashboard
   router.get("/api/campaigns/stats", async (req: Request, res: Response) => {
     try {
       const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
@@ -97,31 +120,26 @@ export async function registerRoutes(server: Server, app: Express) {
       const allEvents = await db.select().from(events);
 
       const stats = allCampaigns.map(campaign => {
-        // Retrouver l'influenceur
         const influencer = allInfluencers.find(inf => inf.id === campaign.influencerId);
-        
-        // Filtrer les événements pour cette campagne (par Slug UTM)
         const campaignEvents = allEvents.filter(e => e.utmCampaign === campaign.slugUtm);
 
-        // Calculs basiques
         const clicks = campaignEvents.filter(e => e.eventType === 'page_view').length;
         const orders = campaignEvents.filter(e => e.eventType === 'purchase').length;
         const revenue = campaignEvents
             .filter(e => e.eventType === 'purchase')
             .reduce((acc, curr) => acc + (curr.revenue || 0), 0);
         
-        // Coûts (Fixe + Commission)
         const commissionCost = revenue * ((campaign.commissionPercent || 0) / 100);
         const totalCost = (campaign.costFixed || 0) + commissionCost;
         const roi = totalCost > 0 ? ((revenue - totalCost) / totalCost) * 100 : 0;
 
         return {
           ...campaign,
-          influencer: influencer || null, // Important pour l'affichage du nom
+          influencer: influencer || null,
           clicks,
           addToCarts: campaignEvents.filter(e => e.eventType === 'add_to_cart').length,
           orders,
-          promoCodeUsage: 0, // À implémenter plus tard
+          promoCodeUsage: 0,
           revenue,
           totalCost,
           roi
@@ -135,13 +153,11 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
-  // Stats globales pour les cartes du haut
   router.get("/api/stats", async (req, res) => {
       try {
         const infCount = await db.select({ count: sql<number>`count(*)` }).from(influencers);
         const activeCampCount = await db.select({ count: sql<number>`count(*)` }).from(campaigns).where(eq(campaigns.status, 'active'));
         
-        // Calcul du revenu total réel
         const allPurchaseEvents = await db.select().from(events).where(eq(events.eventType, 'purchase'));
         const totalRevenue = allPurchaseEvents.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
 
@@ -149,7 +165,7 @@ export async function registerRoutes(server: Server, app: Express) {
           totalInfluencers: Number(infCount[0].count), 
           activeCampaigns: Number(activeCampCount[0].count), 
           totalRevenue: totalRevenue, 
-          averageRoi: 0 // À affiner
+          averageRoi: 0
         });
       } catch (e) {
         console.error("GET Global Stats Error:", e);
@@ -158,7 +174,7 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 3. API CRUD (Gestion de base)
+  // 3. API CRUD
   // ==============================================================================
   
   router.get("/api/campaigns", async (req: Request, res: Response) => {
@@ -179,14 +195,14 @@ export async function registerRoutes(server: Server, app: Express) {
       try {
         const { name, slug, slugUtm, discountType, discountValue, influencerId } = req.body;
         
-        // FIX SLUG : Si vide, on génère
+        // FIX SLUG
         let finalSlug = slug || slugUtm;
         if (!finalSlug || finalSlug.trim() === "") {
              finalSlug = name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
              if (!finalSlug) finalSlug = `campagne-${Date.now()}`;
         }
 
-        // FIX UUID : Si vide, on met null
+        // FIX UUID
         const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
 
         const newCampaign = await db.insert(campaigns).values({
