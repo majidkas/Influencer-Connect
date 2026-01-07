@@ -627,6 +627,125 @@ await db.insert(events).values({
   });
 
 
+// ==============================================================================
+  // 9. SHOPIFY FILE UPLOAD
+  // ==============================================================================
+  router.post("/api/shopify/upload-file", async (req: Request, res: Response) => {
+    const { filename, content, contentType, shop } = req.body;
+    
+    if (!filename || !content || !shop) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
+    
+    if (!shopData || !shopData.accessToken) {
+      return res.status(404).json({ error: "Shop not found" });
+    }
+
+    try {
+      const client = new shopify.clients.Graphql({
+        session: {
+          shop: shopData.shopDomain,
+          accessToken: shopData.accessToken,
+        } as any
+      });
+
+      // Step 1: Create staged upload
+      const stagedUploadResponse = await client.request(`
+        mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+          stagedUploadsCreate(input: $input) {
+            stagedTargets {
+              url
+              resourceUrl
+              parameters {
+                name
+                value
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `, {
+        variables: {
+          input: [{
+            filename: filename,
+            mimeType: contentType || "image/jpeg",
+            resource: "FILE",
+            httpMethod: "POST"
+          }]
+        }
+      });
+
+      const stagedTarget = (stagedUploadResponse as any).data?.stagedUploadsCreate?.stagedTargets?.[0];
+      
+      if (!stagedTarget) {
+        return res.status(500).json({ error: "Failed to create staged upload" });
+      }
+
+      // Step 2: Upload file to staged URL
+      const formData = new FormData();
+      stagedTarget.parameters.forEach((param: any) => {
+        formData.append(param.name, param.value);
+      });
+      
+      // Convert base64 to buffer
+      const buffer = Buffer.from(content, 'base64');
+      const blob = new Blob([buffer], { type: contentType || 'image/jpeg' });
+      formData.append('file', blob, filename);
+
+      const uploadResponse = await fetch(stagedTarget.url, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!uploadResponse.ok) {
+        return res.status(500).json({ error: "Failed to upload file" });
+      }
+
+      // Step 3: Create file in Shopify
+      const fileCreateResponse = await client.request(`
+        mutation fileCreate($files: [FileCreateInput!]!) {
+          fileCreate(files: $files) {
+            files {
+              ... on MediaImage {
+                id
+                image {
+                  url
+                }
+              }
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `, {
+        variables: {
+          files: [{
+            originalSource: stagedTarget.resourceUrl,
+            contentType: "IMAGE"
+          }]
+        }
+      });
+
+      const createdFile = (fileCreateResponse as any).data?.fileCreate?.files?.[0];
+      
+      if (createdFile?.image?.url) {
+        res.json({ success: true, url: createdFile.image.url });
+      } else {
+        // Return the resourceUrl as fallback
+        res.json({ success: true, url: stagedTarget.resourceUrl });
+      }
+    } catch (e: any) {
+      console.error("❌ File Upload Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
 
 
 

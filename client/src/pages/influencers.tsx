@@ -41,8 +41,8 @@ import type { InfluencerWithSocials, InsertInfluencer, InsertSocialAccount } fro
 const influencerFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Invalid email").optional().or(z.literal("")),
-  profileImageUrl: z.string().url("Invalid URL").optional().or(z.literal("")),
-  instagramHandle: z.string().optional().or(z.literal("")),
+  profileImageUrl: z.string().optional().or(z.literal("")),
+  gender: z.enum(["female", "male"]).optional(),
   internalRating: z.number().min(0).max(5).default(0),
   internalNotes: z.string().optional().or(z.literal("")),
 });
@@ -50,7 +50,7 @@ const influencerFormSchema = z.object({
 type InfluencerFormData = z.infer<typeof influencerFormSchema>;
 
 const socialAccountSchema = z.object({
-  platform: z.enum(["instagram", "tiktok", "snapchat"]),
+  platform: z.enum(["instagram", "tiktok", "snapchat", "youtube"]),
   handle: z.string().min(1, "Handle is required"),
   followersCount: z.number().min(0).default(0),
 });
@@ -180,14 +180,15 @@ function SocialAccountForm({
           <SelectTrigger data-testid="select-platform">
             <SelectValue placeholder="Platform" />
           </SelectTrigger>
-          <SelectContent>
+<SelectContent>
             <SelectItem value="instagram">Instagram</SelectItem>
             <SelectItem value="tiktok">TikTok</SelectItem>
             <SelectItem value="snapchat">Snapchat</SelectItem>
+            <SelectItem value="youtube">YouTube</SelectItem>
           </SelectContent>
         </Select>
         <Input
-          placeholder="@handle"
+          placeholder="handle"
           value={form.watch("handle")}
           onChange={(e) => form.setValue("handle", e.target.value.replace("@", ""))}
           data-testid="input-social-handle"
@@ -223,22 +224,27 @@ function InfluencerFormDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const { toast } = useToast();
-  const [socialAccounts, setSocialAccounts] = useState<SocialAccountFormData[]>(
+
+
+const [socialAccounts, setSocialAccounts] = useState<SocialAccountFormData[]>(
     influencer?.socialAccounts?.map((a) => ({
-      platform: a.platform as "instagram" | "tiktok" | "snapchat",
+      platform: a.platform as "instagram" | "tiktok" | "snapchat" | "youtube",
       handle: a.handle,
       followersCount: a.followersCount || 0,
     })) || []
   );
+
+
+
   const [imageInputType, setImageInputType] = useState<"url" | "upload">("url");
 
-  const form = useForm<InfluencerFormData>({
+const form = useForm<InfluencerFormData>({
     resolver: zodResolver(influencerFormSchema),
     defaultValues: {
       name: influencer?.name || "",
       email: influencer?.email || "",
       profileImageUrl: influencer?.profileImageUrl || "",
-      instagramHandle: influencer?.instagramHandle || "",
+      gender: (influencer as any)?.gender || undefined,
       internalRating: influencer?.internalRating || 0,
       internalNotes: influencer?.internalNotes || "",
     },
@@ -303,70 +309,148 @@ function InfluencerFormDialog({
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <div className="flex items-center gap-4">
-              <InfluencerAvatar
-                name={form.watch("name") || "?"}
-                imageUrl={form.watch("profileImageUrl") || undefined}
-                size="xl"
-              />
-              <div className="flex-1 space-y-2">
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant={imageInputType === "url" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setImageInputType("url")}
-                  >
-                    <LinkIcon className="h-4 w-4 mr-1" />
-                    URL
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={imageInputType === "upload" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setImageInputType("upload")}
-                    disabled
-                  >
-                    <Upload className="h-4 w-4 mr-1" />
-                    Upload
-                  </Button>
+
+
+
+
+
+{/* Photo + Name + Rating sur la même ligne */}
+            <div className="flex items-start gap-4">
+              {/* Photo upload */}
+              <div className="flex flex-col items-center">
+                <div 
+                  className="h-24 w-24 rounded-full bg-muted flex items-center justify-center cursor-pointer hover:bg-muted/80 overflow-hidden"
+                  onClick={() => document.getElementById('photo-upload')?.click()}
+                >
+                  {form.watch("profileImageUrl") ? (
+                    <img 
+                      src={form.watch("profileImageUrl")} 
+                      alt="Profile" 
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-sm text-muted-foreground text-center px-2">Importer une photo</span>
+                  )}
                 </div>
-                {imageInputType === "url" && (
-                  <FormField
-                    control={form.control}
-                    name="profileImageUrl"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormControl>
-                          <Input
-                            placeholder="https://example.com/photo.jpg"
-                            {...field}
-                            value={field.value || ""}
-                            data-testid="input-image-url"
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
+                <input
+                  id="photo-upload"
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = async () => {
+                        const base64 = (reader.result as string).split(',')[1];
+                        try {
+                          const response = await fetch('/api/shopify/upload-file', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              filename: file.name,
+                              content: base64,
+                              contentType: file.type,
+                              shop: 'clikn01.myshopify.com'
+                            })
+                          });
+                          const data = await response.json();
+                          if (data.url) {
+                            form.setValue('profileImageUrl', data.url);
+                          }
+                        } catch (err) {
+                          console.error('Upload error:', err);
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                />
+              </div>
+
+              {/* Name + Rating */}
+              <div className="flex-1 space-y-3">
+                <FormField
+                  control={form.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Name*</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Sarah Mode" {...field} data-testid="input-name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="internalRating"
+                  render={({ field }) => (
+                    <FormItem>
+                      <div className="flex items-center gap-2">
+                        <FormLabel>Rating</FormLabel>
+                        <StarRating
+                          rating={field.value || 0}
+                          size="lg"
+                          interactive
+                          onChange={field.onChange}
+                        />
+                        <button
+                          type="button"
+                          className="text-sm text-muted-foreground hover:text-foreground"
+                          onClick={() => field.onChange(0)}
+                        >
+                          Reset.
+                        </button>
+                      </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
             </div>
 
+            {/* Gender */}
             <FormField
               control={form.control}
-              name="name"
+              name="gender"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Name *</FormLabel>
-                  <FormControl>
-                    <Input placeholder="Sarah Mode" {...field} data-testid="input-name" />
-                  </FormControl>
+                  <div className="flex items-center gap-4">
+                    <FormLabel>Gender*</FormLabel>
+                    <div className="flex items-center gap-4">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="gender"
+                          value="female"
+                          checked={field.value === "female"}
+                          onChange={() => field.onChange("female")}
+                          className="h-4 w-4"
+                        />
+                        <span>Female</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="gender"
+                          value="male"
+                          checked={field.value === "male"}
+                          onChange={() => field.onChange("male")}
+                          className="h-4 w-4"
+                        />
+                        <span>Male</span>
+                      </label>
+                    </div>
+                  </div>
                   <FormMessage />
                 </FormItem>
               )}
             />
 
+            {/* Email */}
             <FormField
               control={form.control}
               name="email"
@@ -387,43 +471,10 @@ function InfluencerFormDialog({
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="instagramHandle"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Instagram Handle</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="@sarah.mode"
-                      {...field}
-                      value={field.value || ""}
-                      data-testid="input-instagram"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
 
-            <FormField
-              control={form.control}
-              name="internalRating"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Rating</FormLabel>
-                  <FormControl>
-                    <StarRating
-                      rating={field.value || 0}
-                      size="lg"
-                      interactive
-                      onChange={field.onChange}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+
+
+
 
             <FormField
               control={form.control}

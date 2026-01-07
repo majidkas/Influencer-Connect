@@ -21,11 +21,12 @@ export const influencers = pgTable("influencers", {
   name: text("name").notNull(),
   email: text("email"),
   profileImageUrl: text("profile_image_url"),
-  instagramHandle: text("instagram_handle"),
+  gender: text("gender"),
   internalRating: integer("internal_rating").default(0),
   internalNotes: text("internal_notes"),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
 
 // Social accounts
 export const socialAccounts = pgTable("social_accounts", {
