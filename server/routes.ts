@@ -152,7 +152,12 @@ export async function registerRoutes(server: Server, app: Express) {
           clicks,
           addToCarts: campaignEvents.filter(e => e.eventType === 'add_to_cart').length,
           orders: ordersCount,
-          promoCodeUsage: 0,
+          promoCodeUsage: campaignEvents.filter(e => {
+  if (e.eventType !== 'purchase') return false;
+  const payload = e.payload as any;
+  if (!payload?.promoCode || !campaign.promoCode) return false;
+  return payload.promoCode.toLowerCase() === campaign.promoCode.toLowerCase();
+}).length,
           revenue,
           totalCost,
           roas
