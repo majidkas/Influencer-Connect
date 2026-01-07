@@ -492,7 +492,7 @@ function CampaignFormDialog({
                           .filter(c => c.status === "ACTIVE")
                           .map((discount) => (
                             <SelectItem key={discount.code} value={discount.code}>
-                              {discount.code} - {discount.title}
+                             {discount.code}{discount.title !== discount.code ? ` - ${discount.title}` : ''}
                             </SelectItem>
                           ))}
                       </SelectContent>
