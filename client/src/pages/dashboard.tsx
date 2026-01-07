@@ -131,8 +131,8 @@ export default function Dashboard() {
               icon={DollarSign}
             />
             <StatCard
-              title="Average ROI"
-              value={`${(stats?.averageRoi || 0).toFixed(1)}%`}
+            title="Average ROAS"
+value={(stats?.averageRoas || 0).toFixed(2)}
               icon={TrendingUp}
             />
           </>
@@ -187,7 +187,7 @@ export default function Dashboard() {
                     </TableHead>
                     <TableHead className="text-right">Revenue</TableHead>
                     <TableHead className="text-right">Costs</TableHead>
-                    <TableHead className="text-right">ROI</TableHead>
+                    <TableHead className="text-right">ROAS</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -228,7 +228,7 @@ export default function Dashboard() {
                         {formatCurrency(campaign.totalCost)}
                       </TableCell>
                       <TableCell className="text-right">
-                        <RoiBadge roi={campaign.roi} />
+                       <RoiBadge roi={campaign.roas} />
                       </TableCell>
                     </TableRow>
                   ))}

@@ -8,9 +8,10 @@ interface RoiBadgeProps {
 }
 
 export function RoiBadge({ roi, size = "md" }: RoiBadgeProps) {
-  const isPositive = roi > 0;
-  const isNegative = roi < 0;
-  const isNeutral = roi === 0;
+  // ROAS: > 1 = profitable, < 1 = loss, = 1 = break-even
+  const isPositive = roi > 1;
+  const isNegative = roi < 1 && roi > 0;
+  const isNeutral = roi === 0 || roi === 1;
 
   const Icon = isPositive ? TrendingUp : isNegative ? TrendingDown : Minus;
 
@@ -26,7 +27,7 @@ export function RoiBadge({ roi, size = "md" }: RoiBadgeProps) {
       )}
     >
       <Icon className={size === "sm" ? "h-3 w-3" : "h-4 w-4"} />
-      <span>{isPositive ? "+" : ""}{roi.toFixed(1)}%</span>
+      <span>{roi.toFixed(2)}</span>
     </Badge>
   );
 }

@@ -144,7 +144,7 @@ export async function registerRoutes(server: Server, app: Express) {
         
         const commissionCost = revenue * ((campaign.commissionPercent || 0) / 100);
         const totalCost = (campaign.costFixed || 0) + commissionCost;
-        const roi = totalCost > 0 ? ((revenue - totalCost) / totalCost) * 100 : 0;
+        const roas = totalCost > 0 ? (revenue / totalCost) : 0;
 
         return {
           ...campaign,
@@ -155,7 +155,7 @@ export async function registerRoutes(server: Server, app: Express) {
           promoCodeUsage: 0,
           revenue,
           totalCost,
-          roi
+          roas
         };
       });
       res.json(stats);
