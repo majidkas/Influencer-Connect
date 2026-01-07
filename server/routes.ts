@@ -401,5 +401,102 @@ await db.insert(events).values({
     });
   });
 
+
+
+
+// ==============================================================================
+// 7. SHOPIFY DISCOUNT CODES
+// ==============================================================================
+router.get("/api/shopify/discount-codes", async (req: Request, res: Response) => {
+  const shop = req.query.shop as string;
+  
+  if (!shop) {
+    return res.json({ error: "Missing shop parameter", codes: [] });
+  }
+
+  const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
+  
+  if (!shopData || !shopData.accessToken) {
+    return res.json({ error: "Shop not found", codes: [] });
+  }
+
+  try {
+    const client = new shopify.clients.Graphql({
+      session: {
+        shop: shopData.shopDomain,
+        accessToken: shopData.accessToken,
+      } as any
+    });
+
+    const response = await client.request(`
+      query {
+        codeDiscountNodes(first: 50) {
+          nodes {
+            id
+            codeDiscount {
+              ... on DiscountCodeBasic {
+                title
+                codes(first: 10) {
+                  nodes {
+                    code
+                  }
+                }
+                status
+              }
+              ... on DiscountCodeBxgy {
+                title
+                codes(first: 10) {
+                  nodes {
+                    code
+                  }
+                }
+                status
+              }
+              ... on DiscountCodeFreeShipping {
+                title
+                codes(first: 10) {
+                  nodes {
+                    code
+                  }
+                }
+                status
+              }
+            }
+          }
+        }
+      }
+    `);
+
+    const discountNodes = (response as any).data?.codeDiscountNodes?.nodes || [];
+    const codes: { code: string; title: string; status: string }[] = [];
+
+    for (const node of discountNodes) {
+      const discount = node.codeDiscount;
+      if (discount && discount.codes?.nodes) {
+        for (const codeNode of discount.codes.nodes) {
+          codes.push({
+            code: codeNode.code,
+            title: discount.title || codeNode.code,
+            status: discount.status || "ACTIVE"
+          });
+        }
+      }
+    }
+
+    res.json({ codes });
+  } catch (e: any) {
+    console.error("❌ Discount Codes Error:", e);
+    res.json({ error: e.message, codes: [] });
+  }
+});
+
+
+
+
+
+
+
+  
+
   app.use(router);
 }

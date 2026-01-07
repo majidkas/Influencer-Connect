@@ -1,3 +1,4 @@
+import { Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -270,6 +271,20 @@ function CampaignFormDialog({
     queryKey: ["/api/influencers"],
   });
 
+
+
+const { data: discountCodes, isLoading: discountCodesLoading } = useQuery<{
+  codes: { code: string; title: string; status: string }[];
+}>({
+  queryKey: ["/api/shopify/discount-codes", "clikn01.myshopify.com"],
+  queryFn: async () => {
+    const response = await fetch("/api/shopify/discount-codes?shop=clikn01.myshopify.com");
+    return response.json();
+  },
+});
+
+
+
   const form = useForm<CampaignFormData>({
     resolver: zodResolver(campaignFormSchema),
     defaultValues: {
@@ -309,7 +324,7 @@ useEffect(() => {
 
 
 
-  
+
 
   const createMutation = useMutation({
     mutationFn: async (data: CampaignFormData) => {
@@ -453,29 +468,59 @@ useEffect(() => {
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="promoCode"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Promo Code</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="SARAH20"
-                      {...field}
-                      value={field.value || ""}
-                      className="uppercase"
-                      onChange={(e) => field.onChange(e.target.value.toUpperCase())}
-                      data-testid="input-promo-code"
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Used for secure attribution tracking
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+           <FormField
+  control={form.control}
+  name="promoCode"
+  render={({ field }) => (
+    <FormItem>
+      <FormLabel>Promo Code</FormLabel>
+      {discountCodesLoading ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading discount codes...
+        </div>
+      ) : discountCodes?.codes && discountCodes.codes.length > 0 ? (
+        <Select
+          value={field.value || ""}
+          onValueChange={field.onChange}
+        >
+          <FormControl>
+            <SelectTrigger data-testid="select-promo-code">
+              <SelectValue placeholder="Select a promo code" />
+            </SelectTrigger>
+          </FormControl>
+          <SelectContent>
+            <SelectItem value="">No promo code</SelectItem>
+            {discountCodes.codes
+              .filter(c => c.status === "ACTIVE")
+              .map((discount) => (
+                <SelectItem key={discount.code} value={discount.code}>
+                  {discount.code} - {discount.title}
+                </SelectItem>
+              ))}
+          </SelectContent>
+        </Select>
+      ) : (
+        <Input
+          placeholder="SARAH20"
+          {...field}
+          value={field.value || ""}
+          className="uppercase"
+          onChange={(e) => field.onChange(e.target.value.toUpperCase())}
+          data-testid="input-promo-code"
+        />
+      )}
+      <FormDescription>
+        Select from Shopify or enter manually
+      </FormDescription>
+      <FormMessage />
+    </FormItem>
+  )}
+/>
+
+
+
+            
 
             <FormField
               control={form.control}
