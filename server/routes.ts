@@ -262,13 +262,14 @@ export async function registerRoutes(server: Server, app: Express) {
       const eventData = req.body;
       console.log("📥 Event Received:", eventData.eventType, "UTM:", eventData.slugUtm || "none");
 
-      await db.insert(events).values({
-        eventType: eventData.eventType,
-        sessionId: eventData.sessionId,
-        utmCampaign: eventData.slugUtm || "unknown",
-        payload: eventData,
-        createdAt: new Date()
-      });
+await db.insert(events).values({
+  eventType: eventData.eventType,
+  sessionId: eventData.sessionId,
+  utmCampaign: eventData.slugUtm || "unknown",
+  revenue: eventData.revenue ? parseFloat(eventData.revenue) : 0,
+  payload: eventData,
+  createdAt: new Date()
+});
       res.json({ success: true });
     } catch (error) {
       console.error("Tracking Error:", error);
