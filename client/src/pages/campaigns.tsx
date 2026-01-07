@@ -487,7 +487,7 @@ function CampaignFormDialog({
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="">No promo code</SelectItem>
+                        <SelectItem value="none">No promo code</SelectItem>
                         {discountCodes.codes
                           .filter(c => c.status === "ACTIVE")
                           .map((discount) => (
