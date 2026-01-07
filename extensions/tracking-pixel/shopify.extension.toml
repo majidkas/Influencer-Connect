@@ -20,8 +20,5 @@ validations = [
   { name = "min", value = "1" }
 ]
 
-[[extensions.targeting]]
-module = "./src/index.js"
-
-[extensions.targeting.runtime]
+[runtime]
 allow_list = ["https://api.influtrak.com/*"]
