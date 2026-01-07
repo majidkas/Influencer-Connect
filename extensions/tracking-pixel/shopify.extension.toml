@@ -1,4 +1,3 @@
-
 uid = "c5fcf820-3fb1-017e-8fe4-d4f9e935804a56febac2"
 type = "web_pixel_extension"
 name = "Influencer Tracking Pixel"
@@ -20,3 +19,9 @@ type = "single_line_text_field"
 validations = [
   { name = "min", value = "1" }
 ]
+
+[[extensions.targeting]]
+module = "./src/index.js"
+
+[extensions.targeting.runtime]
+allow_list = ["https://api.influtrak.com/*"]
