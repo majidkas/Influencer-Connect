@@ -407,7 +407,7 @@ await db.insert(events).values({
 // ==============================================================================
 // 7. SHOPIFY DISCOUNT CODES
 // ==============================================================================
-router.get("/api/shopify/discount-codes", async (req: Request, res: Response) => {
+  router.get("/api/shopify/discount-codes", async (req: Request, res: Response) => {
   const shop = req.query.shop as string;
   
   if (!shop) {

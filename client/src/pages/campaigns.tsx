@@ -1,4 +1,3 @@
-import { Loader2 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
@@ -34,7 +33,7 @@ import {
 import { InfluencerAvatar } from "@/components/influencer-avatar";
 import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Megaphone, Link as LinkIcon, Tag, DollarSign, Percent, Copy, Check } from "lucide-react";
+import { Plus, Pencil, Trash2, Megaphone, Link as LinkIcon, Tag, DollarSign, Percent, Copy, Check, Loader2 } from "lucide-react";
 import type { CampaignWithInfluencer, Influencer } from "@shared/schema";
 
 const campaignFormSchema = z.object({
@@ -271,64 +270,62 @@ function CampaignFormDialog({
     queryKey: ["/api/influencers"],
   });
 
-
-
-const { data: discountCodes, isLoading: discountCodesLoading } = useQuery<{
-  codes: { code: string; title: string; status: string }[];
-}>({
-  queryKey: ["/api/shopify/discount-codes", "clikn01.myshopify.com"],
-  queryFn: async () => {
-    const response = await fetch("/api/shopify/discount-codes?shop=clikn01.myshopify.com");
-    return response.json();
-  },
-});
-
-
+  const { data: discountCodes, isLoading: discountCodesLoading } = useQuery<{
+    codes: { code: string; title: string; status: string }[];
+  }>({
+    queryKey: ["/api/shopify/discount-codes", "clikn01.myshopify.com"],
+    queryFn: async () => {
+      const response = await fetch("/api/shopify/discount-codes?shop=clikn01.myshopify.com");
+      return response.json();
+    },
+  });
 
   const form = useForm<CampaignFormData>({
     resolver: zodResolver(campaignFormSchema),
     defaultValues: {
-      influencerId: campaign?.influencerId || "",
-      name: campaign?.name || "",
-      slugUtm: campaign?.slugUtm || "",
-      promoCode: campaign?.promoCode || "",
-      productUrl: campaign?.productUrl || "",
-      costFixed: campaign?.costFixed || 0,
-      commissionPercent: campaign?.commissionPercent || 0,
-      status: (campaign?.status as "active" | "paused" | "completed") || "active",
+      influencerId: "",
+      name: "",
+      slugUtm: "",
+      promoCode: "",
+      productUrl: "",
+      costFixed: 0,
+      commissionPercent: 0,
+      status: "active",
     },
   });
 
   const campaignName = form.watch("name");
   const slugUtm = form.watch("slugUtm");
 
+  // Reset form when dialog opens or campaign changes
+  useEffect(() => {
+    if (open) {
+      form.reset({
+        influencerId: campaign?.influencerId || "",
+        name: campaign?.name || "",
+        slugUtm: campaign?.slugUtm || "",
+        promoCode: campaign?.promoCode || "",
+        productUrl: campaign?.productUrl || "",
+        costFixed: campaign?.costFixed || 0,
+        commissionPercent: campaign?.commissionPercent || 0,
+        status: (campaign?.status as "active" | "paused" | "completed") || "active",
+      });
+    }
+  }, [open, campaign, form]);
 
-
-
-
-useEffect(() => {
-  if (open) {
-    form.reset({
-      influencerId: campaign?.influencerId || "",
-      name: campaign?.name || "",
-      slugUtm: campaign?.slugUtm || "",
-      promoCode: campaign?.promoCode || "",
-      productUrl: campaign?.productUrl || "",
-      costFixed: campaign?.costFixed || 0,
-      commissionPercent: campaign?.commissionPercent || 0,
-      status: (campaign?.status as "active" | "paused" | "completed") || "active",
-    });
-  }
-}, [open, campaign, form]);
-
-
-
-
-
+  // Auto-generate slug from campaign name (only for new campaigns)
+  useEffect(() => {
+    if (campaignName && !campaign) {
+      const generatedSlug = generateSlug(campaignName);
+      if (slugUtm === "" || slugUtm === generateSlug(form.getValues("name").slice(0, -1))) {
+        form.setValue("slugUtm", generatedSlug);
+      }
+    }
+  }, [campaignName, campaign, form, slugUtm]);
 
   const createMutation = useMutation({
     mutationFn: async (data: CampaignFormData) => {
-  const response = await apiRequest("PUT", `/api/campaigns/${campaign?.id}`, data);
+      const response = await apiRequest("POST", "/api/campaigns", data);
       return response.json();
     },
     onSuccess: () => {
@@ -345,7 +342,7 @@ useEffect(() => {
 
   const updateMutation = useMutation({
     mutationFn: async (data: CampaignFormData) => {
-      const response = await apiRequest("PATCH", `/api/campaigns/${campaign?.id}`, data);
+      const response = await apiRequest("PUT", `/api/campaigns/${campaign?.id}`, data);
       return response.json();
     },
     onSuccess: () => {
@@ -468,59 +465,55 @@ useEffect(() => {
               )}
             />
 
-           <FormField
-  control={form.control}
-  name="promoCode"
-  render={({ field }) => (
-    <FormItem>
-      <FormLabel>Promo Code</FormLabel>
-      {discountCodesLoading ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading discount codes...
-        </div>
-      ) : discountCodes?.codes && discountCodes.codes.length > 0 ? (
-        <Select
-          value={field.value || ""}
-          onValueChange={field.onChange}
-        >
-          <FormControl>
-            <SelectTrigger data-testid="select-promo-code">
-              <SelectValue placeholder="Select a promo code" />
-            </SelectTrigger>
-          </FormControl>
-          <SelectContent>
-            <SelectItem value="">No promo code</SelectItem>
-            {discountCodes.codes
-              .filter(c => c.status === "ACTIVE")
-              .map((discount) => (
-                <SelectItem key={discount.code} value={discount.code}>
-                  {discount.code} - {discount.title}
-                </SelectItem>
-              ))}
-          </SelectContent>
-        </Select>
-      ) : (
-        <Input
-          placeholder="SARAH20"
-          {...field}
-          value={field.value || ""}
-          className="uppercase"
-          onChange={(e) => field.onChange(e.target.value.toUpperCase())}
-          data-testid="input-promo-code"
-        />
-      )}
-      <FormDescription>
-        Select from Shopify or enter manually
-      </FormDescription>
-      <FormMessage />
-    </FormItem>
-  )}
-/>
-
-
-
-            
+            <FormField
+              control={form.control}
+              name="promoCode"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Promo Code</FormLabel>
+                  {discountCodesLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading discount codes...
+                    </div>
+                  ) : discountCodes?.codes && discountCodes.codes.length > 0 ? (
+                    <Select
+                      value={field.value || ""}
+                      onValueChange={field.onChange}
+                    >
+                      <FormControl>
+                        <SelectTrigger data-testid="select-promo-code">
+                          <SelectValue placeholder="Select a promo code" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="">No promo code</SelectItem>
+                        {discountCodes.codes
+                          .filter(c => c.status === "ACTIVE")
+                          .map((discount) => (
+                            <SelectItem key={discount.code} value={discount.code}>
+                              {discount.code} - {discount.title}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      placeholder="SARAH20"
+                      {...field}
+                      value={field.value || ""}
+                      className="uppercase"
+                      onChange={(e) => field.onChange(e.target.value.toUpperCase())}
+                      data-testid="input-promo-code"
+                    />
+                  )}
+                  <FormDescription>
+                    Select from Shopify or enter manually
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             <FormField
               control={form.control}
