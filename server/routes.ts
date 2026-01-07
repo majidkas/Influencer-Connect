@@ -136,7 +136,7 @@ export async function registerRoutes(server: Server, app: Express) {
         const influencer = allInfluencers.find(inf => inf.id === campaign.influencerId);
         const campaignEvents = allEvents.filter(e => e.utmCampaign === campaign.slugUtm);
 
-        const clicks = campaignEvents.filter(e => e.eventType === 'page_view').length;
+        const clicks = campaignEvents.filter(e => e.eventType === 'page_view' || e.eventType === 'product_view').length;
         const ordersCount = campaignEvents.filter(e => e.eventType === 'purchase').length;
         const revenue = campaignEvents
             .filter(e => e.eventType === 'purchase')
