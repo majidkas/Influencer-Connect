@@ -14,6 +14,10 @@ export async function registerRoutes(server: Server, app: Express) {
   // ==============================================================================
   // 0. MIDDLEWARE DE SÉCURITÉ (CORS) - INDISPENSABLE POUR LE PIXEL
   // ==============================================================================
+  
+// Increase payload limit for file uploads
+  app.use(require("express").json({ limit: "10mb" }));
+  app.use(require("express").urlencoded({ limit: "10mb", extended: true }));
   app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
