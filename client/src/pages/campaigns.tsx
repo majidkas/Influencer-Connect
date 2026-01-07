@@ -287,18 +287,33 @@ function CampaignFormDialog({
   const campaignName = form.watch("name");
   const slugUtm = form.watch("slugUtm");
 
-  useEffect(() => {
-    if (campaignName && !campaign) {
-      const generatedSlug = generateSlug(campaignName);
-      if (slugUtm === "" || slugUtm === generateSlug(form.getValues("name").slice(0, -1))) {
-        form.setValue("slugUtm", generatedSlug);
-      }
-    }
-  }, [campaignName, campaign, form, slugUtm]);
+
+
+
+
+useEffect(() => {
+  if (open) {
+    form.reset({
+      influencerId: campaign?.influencerId || "",
+      name: campaign?.name || "",
+      slugUtm: campaign?.slugUtm || "",
+      promoCode: campaign?.promoCode || "",
+      productUrl: campaign?.productUrl || "",
+      costFixed: campaign?.costFixed || 0,
+      commissionPercent: campaign?.commissionPercent || 0,
+      status: (campaign?.status as "active" | "paused" | "completed") || "active",
+    });
+  }
+}, [open, campaign, form]);
+
+
+
+
+  
 
   const createMutation = useMutation({
     mutationFn: async (data: CampaignFormData) => {
-      const response = await apiRequest("POST", "/api/campaigns", data);
+  const response = await apiRequest("PUT", `/api/campaigns/${campaign?.id}`, data);
       return response.json();
     },
     onSuccess: () => {
