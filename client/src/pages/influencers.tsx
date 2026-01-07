@@ -337,34 +337,42 @@ const form = useForm<InfluencerFormData>({
                   type="file"
                   accept="image/*"
                   className="hidden"
-                  onChange={async (e) => {
+
+
+
+
+onChange={async (e) => {
                     const file = e.target.files?.[0];
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onload = async () => {
-                        const base64 = (reader.result as string).split(',')[1];
-                        try {
-                          const response = await fetch('/api/shopify/upload-file', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              filename: file.name,
-                              content: base64,
-                              contentType: file.type,
-                              shop: 'clikn01.myshopify.com'
-                            })
-                          });
-                          const data = await response.json();
-                          if (data.url) {
-                            form.setValue('profileImageUrl', data.url);
-                          }
-                        } catch (err) {
-                          console.error('Upload error:', err);
-                        }
-                      };
-                      reader.readAsDataURL(file);
+                    if (!file) return;
+                    
+                    if (file.size > 2 * 1024 * 1024) {
+                      alert("L'image doit faire moins de 2 Mo");
+                      return;
+                    }
+                    
+                    const formData = new FormData();
+                    formData.append("image", file);
+                    
+                    try {
+                      const response = await fetch("/api/upload-image", {
+                        method: "POST",
+                        body: formData,
+                      });
+                      const data = await response.json();
+                      if (data.url) {
+                        form.setValue("profileImageUrl", data.url);
+                      } else {
+                        alert("Erreur lors de l'upload");
+                      }
+                    } catch (err) {
+                      console.error("Upload error:", err);
+                      alert("Erreur lors de l'upload");
                     }
                   }}
+
+
+
+                  
                 />
               </div>
 

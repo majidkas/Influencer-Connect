@@ -4,6 +4,9 @@ import { shopify } from "./shopify";
 import { db } from "./db";
 import { shops, campaigns, influencers, events, orders } from "@shared/schema";
 import { eq, desc, sql } from "drizzle-orm";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 
 export async function registerRoutes(server: Server, app: Express) {
   const router = Router();
@@ -626,126 +629,47 @@ await db.insert(events).values({
     }
   });
 
-
 // ==============================================================================
-  // 9. SHOPIFY FILE UPLOAD
+  // 9. IMAGE UPLOAD (Local Storage)
   // ==============================================================================
-  router.post("/api/shopify/upload-file", async (req: Request, res: Response) => {
-    const { filename, content, contentType, shop } = req.body;
-    
-    if (!filename || !content || !shop) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
+  const uploadDir = path.join(process.cwd(), "uploads/influencers/images-profils");
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
 
-    const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
-    
-    if (!shopData || !shopData.accessToken) {
-      return res.status(404).json({ error: "Shop not found" });
-    }
-
-    try {
-      const client = new shopify.clients.Graphql({
-        session: {
-          shop: shopData.shopDomain,
-          accessToken: shopData.accessToken,
-        } as any
-      });
-
-      // Step 1: Create staged upload
-      const stagedUploadResponse = await client.request(`
-        mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
-          stagedUploadsCreate(input: $input) {
-            stagedTargets {
-              url
-              resourceUrl
-              parameters {
-                name
-                value
-              }
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }
-      `, {
-        variables: {
-          input: [{
-            filename: filename,
-            mimeType: contentType || "image/jpeg",
-            resource: "FILE",
-            httpMethod: "POST"
-          }]
-        }
-      });
-
-      const stagedTarget = (stagedUploadResponse as any).data?.stagedUploadsCreate?.stagedTargets?.[0];
-      
-      if (!stagedTarget) {
-        return res.status(500).json({ error: "Failed to create staged upload" });
-      }
-
-      // Step 2: Upload file to staged URL
-      const formData = new FormData();
-      stagedTarget.parameters.forEach((param: any) => {
-        formData.append(param.name, param.value);
-      });
-      
-      // Convert base64 to buffer
-      const buffer = Buffer.from(content, 'base64');
-      const blob = new Blob([buffer], { type: contentType || 'image/jpeg' });
-      formData.append('file', blob, filename);
-
-      const uploadResponse = await fetch(stagedTarget.url, {
-        method: 'POST',
-        body: formData
-      });
-
-      if (!uploadResponse.ok) {
-        return res.status(500).json({ error: "Failed to upload file" });
-      }
-
-      // Step 3: Create file in Shopify
-      const fileCreateResponse = await client.request(`
-        mutation fileCreate($files: [FileCreateInput!]!) {
-          fileCreate(files: $files) {
-            files {
-              ... on MediaImage {
-                id
-                image {
-                  url
-                }
-              }
-            }
-            userErrors {
-              field
-              message
-            }
-          }
-        }
-      `, {
-        variables: {
-          files: [{
-            originalSource: stagedTarget.resourceUrl,
-            contentType: "IMAGE"
-          }]
-        }
-      });
-
-      const createdFile = (fileCreateResponse as any).data?.fileCreate?.files?.[0];
-      
-      if (createdFile?.image?.url) {
-        res.json({ success: true, url: createdFile.image.url });
-      } else {
-        // Return the resourceUrl as fallback
-        res.json({ success: true, url: stagedTarget.resourceUrl });
-      }
-    } catch (e: any) {
-      console.error("❌ File Upload Error:", e);
-      res.status(500).json({ error: e.message });
-    }
+  const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+      const uniqueName = `${Date.now()}-${Math.random().toString(36).substring(7)}${path.extname(file.originalname)}`;
+      cb(null, uniqueName);
+    },
   });
+
+  const upload = multer({
+    storage,
+    limits: { fileSize: 2 * 1024 * 1024 }, // 2 Mo max
+    fileFilter: (req, file, cb) => {
+      const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+      if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error("Only images are allowed"));
+      }
+    },
+  });
+
+  router.post("/api/upload-image", upload.single("image"), (req: Request, res: Response) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+    const imageUrl = `https://api.influtrak.com/uploads/influencers/images-profils/${req.file.filename}`;
+    res.json({ success: true, url: imageUrl });
+  });
+
+  // Serve uploaded images
+  app.use("/uploads", require("express").static(path.join(process.cwd(), "uploads")));
 
 
 
