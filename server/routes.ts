@@ -515,7 +515,61 @@ await db.insert(events).values({
 
 
 
+// ==============================================================================
+  // 8. SHOPIFY PRODUCTS
+  // ==============================================================================
+  router.get("/api/shopify/products", async (req: Request, res: Response) => {
+    const shop = req.query.shop as string;
+    
+    if (!shop) {
+      return res.json({ error: "Missing shop parameter", products: [] });
+    }
 
+    const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
+    
+    if (!shopData || !shopData.accessToken) {
+      return res.json({ error: "Shop not found", products: [] });
+    }
+
+    try {
+      const client = new shopify.clients.Graphql({
+        session: {
+          shop: shopData.shopDomain,
+          accessToken: shopData.accessToken,
+        } as any
+      });
+
+      const response = await client.request(`
+        query {
+          products(first: 50) {
+            nodes {
+              id
+              title
+              handle
+              featuredImage {
+                url
+              }
+              onlineStoreUrl
+            }
+          }
+        }
+      `);
+
+      const productNodes = (response as any).data?.products?.nodes || [];
+      const products = productNodes.map((p: any) => ({
+        id: p.id,
+        title: p.title,
+        handle: p.handle,
+        imageUrl: p.featuredImage?.url || null,
+        url: p.onlineStoreUrl || `https://${shop}/products/${p.handle}`
+      }));
+
+      res.json({ products });
+    } catch (e: any) {
+      console.error("❌ Products Error:", e);
+      res.json({ error: e.message, products: [] });
+    }
+  });
 
 
 

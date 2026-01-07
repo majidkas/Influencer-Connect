@@ -49,6 +49,14 @@ const campaignFormSchema = z.object({
 
 type CampaignFormData = z.infer<typeof campaignFormSchema>;
 
+interface ShopifyProduct {
+  id: string;
+  title: string;
+  handle: string;
+  imageUrl: string | null;
+  url: string;
+}
+
 const generateSlug = (name: string): string => {
   return name
     .toLowerCase()
@@ -206,6 +214,28 @@ function InfluencerSelectItem({ influencer }: { influencer: Influencer }) {
   );
 }
 
+
+function ProductSelectItem({ product }: { product: ShopifyProduct }) {
+  return (
+    <div className="flex items-center gap-3">
+      {product.imageUrl ? (
+        <img 
+          src={product.imageUrl} 
+          alt={product.title} 
+          className="h-8 w-8 object-cover rounded"
+        />
+      ) : (
+        <div className="h-8 w-8 bg-muted rounded flex items-center justify-center">
+          <Megaphone className="h-4 w-4 text-muted-foreground" />
+        </div>
+      )}
+      <span className="truncate">{product.title}</span>
+    </div>
+  );
+}
+
+
+
 function SponsoredLinkCopier({ productUrl, slugUtm }: { productUrl: string; slugUtm: string }) {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
@@ -276,6 +306,16 @@ function CampaignFormDialog({
     queryKey: ["/api/shopify/discount-codes", "clikn01.myshopify.com"],
     queryFn: async () => {
       const response = await fetch("/api/shopify/discount-codes?shop=clikn01.myshopify.com");
+      return response.json();
+    },
+  });
+
+  const { data: productsData, isLoading: productsLoading } = useQuery<{
+    products: ShopifyProduct[];
+  }>({
+    queryKey: ["/api/shopify/products", "clikn01.myshopify.com"],
+    queryFn: async () => {
+      const response = await fetch("/api/shopify/products?shop=clikn01.myshopify.com");
       return response.json();
     },
   });
@@ -369,9 +409,11 @@ function CampaignFormDialog({
 
   const selectedInfluencer = influencers?.find((i) => i.id === form.watch("influencerId"));
 
+const selectedProduct = productsData?.products?.find((p) => p.url === form.watch("productUrl"));
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+    <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
             {campaign ? "Edit Campaign" : "Create New Campaign"}
@@ -515,27 +557,58 @@ function CampaignFormDialog({
               )}
             />
 
-            <FormField
+           <FormField
               control={form.control}
               name="productUrl"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Product URL</FormLabel>
-                  <FormControl>
+                  <FormLabel>Product</FormLabel>
+                  {productsLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading products...
+                    </div>
+                  ) : productsData?.products && productsData.products.length > 0 ? (
+                    <Select
+                      value={field.value || "none"}
+                      onValueChange={(value) => field.onChange(value === "none" ? "" : value)}
+                    >
+                      <FormControl>
+                        <SelectTrigger data-testid="select-product">
+                          <SelectValue placeholder="Select a product">
+                            {selectedProduct && (
+                              <ProductSelectItem product={selectedProduct} />
+                            )}
+                          </SelectValue>
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="none">No product</SelectItem>
+                        {productsData.products.map((product) => (
+                          <SelectItem key={product.id} value={product.url}>
+                            <ProductSelectItem product={product} />
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
                     <Input
                       placeholder="https://your-store.myshopify.com/products/summer-dress"
                       {...field}
                       value={field.value || ""}
                       data-testid="input-product-url"
                     />
-                  </FormControl>
+                  )}
                   <FormDescription>
-                    The Shopify product page for this campaign
+                    Select the product for this campaign
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
             />
+
+
+            
 
             <SponsoredLinkCopier 
               productUrl={form.watch("productUrl") || ""} 
