@@ -200,29 +200,65 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
-  router.post("/api/campaigns", async (req: Request, res: Response) => {
-    try {
-      const { name, slug, slugUtm, discountType, discountValue, influencerId } = req.body;
-      let finalSlug = slug || slugUtm;
-      if (!finalSlug || finalSlug.trim() === "") {
-        finalSlug = name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
-        if (!finalSlug) finalSlug = `campagne-${Date.now()}`;
-      }
-      const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
-      const newCampaign = await db.insert(campaigns).values({
-        name, 
-        slugUtm: finalSlug, 
-        discountType, 
-        discountValue: discountValue ? parseFloat(discountValue) : 0, 
-        influencerId: cleanInfluencerId, 
-        status: 'active',
-      }).returning();
-      res.json(newCampaign[0]);
-    } catch (e) {
-      console.error("Create Campaign Error:", e);
-      res.status(500).json({ error: "Create failed" });
+router.post("/api/campaigns", async (req: Request, res: Response) => {
+  try {
+    const { name, slug, slugUtm, discountType, discountValue, influencerId, promoCode, productUrl, costFixed, commissionPercent } = req.body;
+    let finalSlug = slug || slugUtm;
+    if (!finalSlug || finalSlug.trim() === "") {
+      finalSlug = name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
+      if (!finalSlug) finalSlug = `campagne-${Date.now()}`;
     }
-  });
+    const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
+    const newCampaign = await db.insert(campaigns).values({
+      name, 
+      slugUtm: finalSlug, 
+      promoCode: promoCode || null,
+      productUrl: productUrl || null,
+      discountType, 
+      discountValue: discountValue ? parseFloat(discountValue) : 0, 
+      costFixed: costFixed ? parseFloat(costFixed) : 0,
+      commissionPercent: commissionPercent ? parseFloat(commissionPercent) : 0,
+      influencerId: cleanInfluencerId, 
+      status: 'active',
+    }).returning();
+    res.json(newCampaign[0]);
+  } catch (e) {
+    console.error("Create Campaign Error:", e);
+    res.status(500).json({ error: "Create failed" });
+  }
+});
+
+
+router.put("/api/campaigns/:id", async (req: Request, res: Response) => {
+  try {
+    const { name, slugUtm, discountType, discountValue, influencerId, promoCode, productUrl, costFixed, commissionPercent, status } = req.body;
+    const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
+    
+    const updated = await db.update(campaigns)
+      .set({
+        name,
+        slugUtm,
+        promoCode: promoCode || null,
+        productUrl: productUrl || null,
+        discountType,
+        discountValue: discountValue ? parseFloat(discountValue) : 0,
+        costFixed: costFixed ? parseFloat(costFixed) : 0,
+        commissionPercent: commissionPercent ? parseFloat(commissionPercent) : 0,
+        influencerId: cleanInfluencerId,
+        status: status || 'active',
+      })
+      .where(eq(campaigns.id, req.params.id))
+      .returning();
+    
+    res.json(updated[0]);
+  } catch (e) {
+    console.error("Update Campaign Error:", e);
+    res.status(500).json({ error: "Update failed" });
+  }
+});
+
+
+
 
   router.delete("/api/campaigns/:id", async (req: Request, res: Response) => {
     try {
