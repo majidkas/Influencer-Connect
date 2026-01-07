@@ -1,3 +1,4 @@
+api_version = "2024-10"
 uid = "c5fcf820-3fb1-017e-8fe4-d4f9e935804a56febac2"
 type = "web_pixel_extension"
 name = "Influencer Tracking Pixel"
@@ -20,5 +21,5 @@ validations = [
   { name = "min", value = "1" }
 ]
 
-[runtime]
-allow_list = ["https://api.influtrak.com/*"]
+[[network_access]]
+hosts = ["https://api.influtrak.com"]
