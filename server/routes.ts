@@ -103,11 +103,11 @@ export async function registerRoutes(server: Server, app: Express) {
         installedAt: new Date(),
       }).onConflictDoUpdate({
         target: shops.shopDomain,
-        set: { 
-          accessToken: session.accessToken, 
+        set: {
+          accessToken: session.accessToken,
           scope: session.scope,
-          isInstalled: true, 
-          uninstalledAt: null 
+          isInstalled: true,
+          uninstalledAt: null
         },
       });
 
@@ -125,7 +125,7 @@ export async function registerRoutes(server: Server, app: Express) {
   // ==============================================================================
   // 2. API DASHBOARD & STATS
   // ==============================================================================
-  
+
   router.get("/api/campaigns/stats", async (req: Request, res: Response) => {
     try {
       const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
@@ -141,7 +141,7 @@ export async function registerRoutes(server: Server, app: Express) {
         const revenue = campaignEvents
             .filter(e => e.eventType === 'purchase')
             .reduce((acc, curr) => acc + (curr.revenue || 0), 0);
-        
+
         const commissionCost = revenue * ((campaign.commissionPercent || 0) / 100);
         const totalCost = (campaign.costFixed || 0) + commissionCost;
         const roas = totalCost > 0 ? (revenue / totalCost) : 0;
@@ -170,27 +170,50 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
+
+
   router.get("/api/stats", async (req, res) => {
     try {
       const infCount = await db.select({ count: sql<number>`count(*)` }).from(influencers);
       const activeCampCount = await db.select({ count: sql<number>`count(*)` }).from(campaigns).where(eq(campaigns.status, 'active'));
       const allPurchaseEvents = await db.select().from(events).where(eq(events.eventType, 'purchase'));
       const totalRevenue = allPurchaseEvents.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
-      res.json({ 
-        totalInfluencers: Number(infCount[0].count), 
-        activeCampaigns: Number(activeCampCount[0].count), 
-        totalRevenue: totalRevenue, 
-        averageRoi: 0 
+
+      // Calculate total costs from all campaigns
+      const allCampaigns = await db.select().from(campaigns);
+      const totalCosts = allCampaigns.reduce((acc, camp) => {
+        const fixedCost = camp.costFixed || 0;
+        // Calculate commission based on campaign revenue from events
+        const campaignRevenue = allPurchaseEvents
+          .filter(e => (e.payload as any)?.slugUtm === camp.slugUtm || e.utmCampaign === camp.slugUtm)
+          .reduce((sum, e) => sum + (e.revenue || 0), 0);
+        const commissionCost = campaignRevenue * ((camp.commissionPercent || 0) / 100);
+        return acc + fixedCost + commissionCost;
+      }, 0);
+
+      // Calculate average ROAS = Total Revenue / Total Costs
+      const averageRoas = totalCosts > 0 ? totalRevenue / totalCosts : 0;
+
+      res.json({
+        totalInfluencers: Number(infCount[0].count),
+        activeCampaigns: Number(activeCampCount[0].count),
+        totalRevenue: totalRevenue,
+        totalCosts: totalCosts,
+        averageRoas: averageRoas
       });
     } catch (e) {
-      res.json({ totalInfluencers: 0, activeCampaigns: 0, totalRevenue: 0, averageRoi: 0 });
+      res.json({ totalInfluencers: 0, activeCampaigns: 0, totalRevenue: 0, totalCosts: 0, averageRoas: 0 });
     }
   });
+
+
+
+
 
   // ==============================================================================
   // 3. API CRUD
   // ==============================================================================
-  
+
   router.get("/api/campaigns", async (req: Request, res: Response) => {
     try {
       const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
@@ -215,15 +238,15 @@ router.post("/api/campaigns", async (req: Request, res: Response) => {
     }
     const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
     const newCampaign = await db.insert(campaigns).values({
-      name, 
-      slugUtm: finalSlug, 
+      name,
+      slugUtm: finalSlug,
       promoCode: promoCode || null,
       productUrl: productUrl || null,
-      discountType, 
-      discountValue: discountValue ? parseFloat(discountValue) : 0, 
+      discountType,
+      discountValue: discountValue ? parseFloat(discountValue) : 0,
       costFixed: costFixed ? parseFloat(costFixed) : 0,
       commissionPercent: commissionPercent ? parseFloat(commissionPercent) : 0,
-      influencerId: cleanInfluencerId, 
+      influencerId: cleanInfluencerId,
       status: 'active',
     }).returning();
     res.json(newCampaign[0]);
@@ -238,7 +261,7 @@ router.put("/api/campaigns/:id", async (req: Request, res: Response) => {
   try {
     const { name, slugUtm, discountType, discountValue, influencerId, promoCode, productUrl, costFixed, commissionPercent, status } = req.body;
     const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
-    
+
     const updated = await db.update(campaigns)
       .set({
         name,
@@ -254,7 +277,7 @@ router.put("/api/campaigns/:id", async (req: Request, res: Response) => {
       })
       .where(eq(campaigns.id, req.params.id))
       .returning();
-    
+
     res.json(updated[0]);
   } catch (e) {
     console.error("Update Campaign Error:", e);
@@ -284,7 +307,7 @@ router.put("/api/campaigns/:id", async (req: Request, res: Response) => {
     const newInf = await db.insert(influencers).values({ name, email, instagramHandle }).returning();
     res.json(newInf[0]);
   });
-  
+
   router.delete("/api/influencers/:id", async (req: Request, res: Response) => {
     try {
       await db.delete(influencers).where(eq(influencers.id, req.params.id));
@@ -328,11 +351,11 @@ await db.insert(events).values({
   // ==============================================================================
   router.get("/api/force-pixel", async (req: Request, res: Response) => {
     const shop = req.query.shop as string;
-    
+
     if (!shop) return res.json({ error: "Missing shop parameter" });
 
     const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
-    
+
     if (!shopData || !shopData.accessToken) {
       return res.json({ error: "Shop non trouvé en BDD ou pas de token. Réinstalle l'app." });
     }
@@ -363,7 +386,7 @@ await db.insert(events).values({
           }
         }
       `);
-      
+
       console.log("✅ Force Pixel Response:", response);
       res.json(response);
     } catch (e: any) {
@@ -376,8 +399,8 @@ await db.insert(events).values({
   // 6. DEBUG & HEALTH CHECK
   // ==============================================================================
   router.get("/api/webhooks/test", (req: Request, res: Response) => {
-    res.json({ 
-      status: "OK", 
+    res.json({
+      status: "OK",
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || "development"
     });
@@ -386,11 +409,11 @@ await db.insert(events).values({
   router.get("/api/debug/shop", async (req: Request, res: Response) => {
     const shop = req.query.shop as string;
     if (!shop) return res.json({ error: "Missing shop parameter" });
-    
+
     const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
-    
+
     if (!shopData) return res.json({ error: "Shop not found", shop });
-    
+
     res.json({
       shop: shopData.shopDomain,
       hasToken: !!shopData.accessToken,
@@ -409,13 +432,13 @@ await db.insert(events).values({
 // ==============================================================================
   router.get("/api/shopify/discount-codes", async (req: Request, res: Response) => {
   const shop = req.query.shop as string;
-  
+
   if (!shop) {
     return res.json({ error: "Missing shop parameter", codes: [] });
   }
 
   const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
-  
+
   if (!shopData || !shopData.accessToken) {
     return res.json({ error: "Shop not found", codes: [] });
   }
@@ -496,7 +519,7 @@ await db.insert(events).values({
 
 
 
-  
+
 
   app.use(router);
 }

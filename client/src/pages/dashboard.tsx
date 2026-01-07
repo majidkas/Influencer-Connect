@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -9,10 +10,18 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { InfluencerAvatar } from "@/components/influencer-avatar";
 import { RoiBadge } from "@/components/roi-badge";
 import { StatusBadge } from "@/components/status-badge";
-import { Users, Megaphone, DollarSign, TrendingUp, MousePointer, ShoppingCart, Package, Tag } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { Users, Megaphone, DollarSign, TrendingUp, MousePointer, ShoppingCart, Package, Tag, Copy, Check, Link, CreditCard, Image } from "lucide-react";
 import type { CampaignWithStats } from "@shared/schema";
 
 const formatCurrency = (amount: number): string => {
@@ -78,12 +87,96 @@ function DashboardTableSkeleton() {
   );
 }
 
+function CopyLinkButton({ campaign }: { campaign: CampaignWithStats }) {
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+
+  const getSponsoredLink = () => {
+    if (campaign.productUrl && campaign.slugUtm) {
+      const separator = campaign.productUrl.includes("?") ? "&" : "?";
+      return `${campaign.productUrl}${separator}utm_campaign=${campaign.slugUtm}`;
+    }
+    return null;
+  };
+
+  const handleCopy = async () => {
+    const link = getSponsoredLink();
+    if (link) {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      toast({ title: "Lien sponsorisé copié" });
+      setTimeout(() => setCopied(false), 2000);
+    } else {
+      toast({ title: "URL produit manquante", variant: "destructive" });
+    }
+  };
+
+  const sponsoredLink = getSponsoredLink();
+
+  if (!sponsoredLink) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 w-8 p-0"
+            onClick={handleCopy}
+          >
+            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p>Copier le lien sponsorisé</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function ProductCell({ campaign }: { campaign: CampaignWithStats }) {
+  const productName = campaign.productUrl 
+    ? campaign.productUrl.split('/products/')[1]?.split('?')[0]?.replace(/-/g, ' ') || "Produit"
+    : null;
+
+  if (!productName) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+
+  const truncatedName = productName.length > 20 
+    ? productName.substring(0, 20) + "..." 
+    : productName;
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex items-center gap-2 max-w-[150px]">
+            <div className="h-8 w-8 bg-muted rounded flex items-center justify-center flex-shrink-0">
+              <Image className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <span className="text-sm truncate capitalize">{truncatedName}</span>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p className="capitalize">{productName}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 export default function Dashboard() {
   const { data: stats, isLoading: statsLoading } = useQuery<{
     totalInfluencers: number;
     activeCampaigns: number;
     totalRevenue: number;
-    averageRoi: number;
+    totalCosts: number;
+    averageRoas: number;
   }>({
     queryKey: ["/api/stats"],
   });
@@ -101,9 +194,9 @@ export default function Dashboard() {
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         {statsLoading ? (
-          Array.from({ length: 4 }).map((_, i) => (
+          Array.from({ length: 5 }).map((_, i) => (
             <Card key={i}>
               <CardHeader className="pb-2">
                 <Skeleton className="h-4 w-24" />
@@ -131,8 +224,13 @@ export default function Dashboard() {
               icon={DollarSign}
             />
             <StatCard
-            title="Average ROAS"
-value={(stats?.averageRoas || 0).toFixed(2)}
+              title="Total Costs"
+              value={formatCurrency(stats?.totalCosts || 0)}
+              icon={CreditCard}
+            />
+            <StatCard
+              title="Average ROAS"
+              value={(stats?.averageRoas || 0).toFixed(2)}
               icon={TrendingUp}
             />
           </>
@@ -159,8 +257,14 @@ value={(stats?.averageRoas || 0).toFixed(2)}
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="min-w-[200px]">Influencer</TableHead>
-                    <TableHead className="min-w-[150px]">Campaign</TableHead>
+                    <TableHead className="min-w-[180px]">Influencer</TableHead>
+                    <TableHead className="min-w-[120px]">Campaign</TableHead>
+                    <TableHead className="min-w-[150px]">Product</TableHead>
+                    <TableHead className="text-center w-[60px]">
+                      <div className="flex items-center justify-center gap-1">
+                        <Link className="h-3 w-3" />
+                      </div>
+                    </TableHead>
                     <TableHead className="text-right">
                       <div className="flex items-center justify-end gap-1">
                         <MousePointer className="h-3 w-3" />
@@ -209,6 +313,12 @@ value={(stats?.averageRoas || 0).toFixed(2)}
                           <StatusBadge status={campaign.status || "active"} />
                         </div>
                       </TableCell>
+                      <TableCell>
+                        <ProductCell campaign={campaign} />
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <CopyLinkButton campaign={campaign} />
+                      </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {formatNumber(campaign.clicks)}
                       </TableCell>
@@ -219,7 +329,15 @@ value={(stats?.averageRoas || 0).toFixed(2)}
                         {formatNumber(campaign.orders)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {formatNumber(campaign.promoCodeUsage)}
+                        {campaign.promoCode ? (
+                          <span>
+                            <span className="text-muted-foreground text-xs">{campaign.promoCode}</span>
+                            {" "}
+                            <span className="font-medium">({campaign.promoCodeUsage})</span>
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums font-medium">
                         {formatCurrency(campaign.revenue)}
@@ -228,7 +346,7 @@ value={(stats?.averageRoas || 0).toFixed(2)}
                         {formatCurrency(campaign.totalCost)}
                       </TableCell>
                       <TableCell className="text-right">
-                       <RoiBadge roi={campaign.roas} />
+                        <RoiBadge roi={campaign.roas} />
                       </TableCell>
                     </TableRow>
                   ))}
