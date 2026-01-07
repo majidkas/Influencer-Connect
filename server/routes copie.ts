@@ -9,24 +9,6 @@ export async function registerRoutes(server: Server, app: Express) {
   const router = Router();
 
   // ==============================================================================
-  // 0. MIDDLEWARE DE SÉCURITÉ (CORS) - INDISPENSABLE POUR LE PIXEL
-  // ==============================================================================
-  app.use((req, res, next) => {
-    // Autoriser toutes les origines (nécessaire pour le sandbox Shopify)
-    res.header("Access-Control-Allow-Origin", "*");
-    // Autoriser les méthodes HTTP utilisées
-    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    // Autoriser les en-têtes personnalisés du Pixel
-    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-requested-with");
-
-    // Répondre immédiatement aux requêtes de pré-vérification (OPTIONS)
-    if (req.method === "OPTIONS") {
-      return res.sendStatus(200);
-    }
-    next();
-  });
-
-  // ==============================================================================
   // 1. AUTHENTIFICATION & INSTALLATION
   // ==============================================================================
   router.get("/api/shopify/auth", async (req: Request, res: Response) => {
@@ -78,7 +60,8 @@ export async function registerRoutes(server: Server, app: Express) {
           } as any
         });
 
-        // IMPORTANT: accountID est requis par le schéma shopify.extension.toml
+        // IMPORTANT: Les settings doivent correspondre au schéma dans shopify.extension.toml
+        // accountID est requis (min length = 1)
         const accountID = session.shop.replace('.myshopify.com', '');
         const settingsJson = JSON.stringify({ accountID: accountID });
 
@@ -195,4 +178,186 @@ export async function registerRoutes(server: Server, app: Express) {
   // 3. API CRUD
   // ==============================================================================
   
-  router.get("/api/campaign
+  router.get("/api/campaigns", async (req: Request, res: Response) => {
+    try {
+      const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
+      const allInfluencers = await db.select().from(influencers);
+      const result = allCampaigns.map(campaign => ({
+          ...campaign,
+          influencer: allInfluencers.find(inf => inf.id === campaign.influencerId) || null
+      }));
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: "Failed" });
+    }
+  });
+
+  router.post("/api/campaigns", async (req: Request, res: Response) => {
+    try {
+      const { name, slug, slugUtm, discountType, discountValue, influencerId } = req.body;
+      let finalSlug = slug || slugUtm;
+      if (!finalSlug || finalSlug.trim() === "") {
+        finalSlug = name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
+        if (!finalSlug) finalSlug = `campagne-${Date.now()}`;
+      }
+      const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
+      const newCampaign = await db.insert(campaigns).values({
+        name, 
+        slugUtm: finalSlug, 
+        discountType, 
+        discountValue: discountValue ? parseFloat(discountValue) : 0, 
+        influencerId: cleanInfluencerId, 
+        status: 'active',
+      }).returning();
+      res.json(newCampaign[0]);
+    } catch (e) {
+      console.error("Create Campaign Error:", e);
+      res.status(500).json({ error: "Create failed" });
+    }
+  });
+
+  router.delete("/api/campaigns/:id", async (req: Request, res: Response) => {
+    try {
+      await db.delete(campaigns).where(eq(campaigns.id, req.params.id));
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: "Delete failed" });
+    }
+  });
+
+  router.get("/api/influencers", async (req, res) => {
+    const all = await db.select().from(influencers).orderBy(desc(influencers.createdAt));
+    res.json(all);
+  });
+
+  router.post("/api/influencers", async (req, res) => {
+    const { name, email, instagramHandle } = req.body;
+    const newInf = await db.insert(influencers).values({ name, email, instagramHandle }).returning();
+    res.json(newInf[0]);
+  });
+  
+  router.delete("/api/influencers/:id", async (req: Request, res: Response) => {
+    try {
+      await db.delete(influencers).where(eq(influencers.id, req.params.id));
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: "Delete failed" });
+    }
+  });
+
+  // ==============================================================================
+  // 4. TRACKING & WEBHOOKS
+  // ==============================================================================
+
+  router.post("/api/tracking/event", async (req: Request, res: Response) => {
+    try {
+      const eventData = req.body;
+      await db.insert(events).values({
+        eventType: eventData.eventType,
+        sessionId: eventData.sessionId,
+        utmCampaign: eventData.slugUtm || "unknown",
+        payload: eventData,
+        createdAt: new Date()
+      });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Tracking Error:", error);
+      res.status(500).json({ error: "Failed" });
+    }
+  });
+
+  router.post("/api/webhooks/orders/create", async (req: Request, res: Response) => {
+    console.log("💰 ORDER WEBHOOK RECEIVED");
+    res.status(200).send();
+  });
+
+  // ==============================================================================
+  // 5. FORCE PIXEL - Syntaxe corrigée pour Shopify API v12+
+  // ==============================================================================
+  router.get("/api/force-pixel", async (req: Request, res: Response) => {
+    const shop = req.query.shop as string;
+    
+    if (!shop) {
+      return res.json({ error: "Missing shop parameter" });
+    }
+
+    // 1. Récupérer le token depuis la base de données
+    const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
+    
+    if (!shopData || !shopData.accessToken) {
+      return res.json({ error: "Shop non trouvé en BDD ou pas de token. Réinstalle l'app." });
+    }
+
+    try {
+      // 2. Créer le client GraphQL avec la nouvelle syntaxe v12+
+      const client = new shopify.clients.Graphql({
+        session: {
+          shop: shopData.shopDomain,
+          accessToken: shopData.accessToken,
+        } as any
+      });
+
+      // 3. Envoyer la mutation pour activer le pixel
+      // IMPORTANT: Les settings doivent correspondre au schéma dans shopify.extension.toml
+      const accountID = shopData.shopDomain.replace('.myshopify.com', '');
+      const settingsJson = JSON.stringify({ accountID: accountID });
+
+      const response = await client.request(`
+        mutation {
+          webPixelCreate(webPixel: { settings: ${JSON.stringify(settingsJson)} }) {
+            userErrors {
+              code
+              field
+              message
+            }
+            webPixel {
+              id
+              settings
+            }
+          }
+        }
+      `);
+      
+      console.log("✅ Force Pixel Response:", response);
+      res.json(response);
+    } catch (e: any) {
+      console.error("❌ Force Pixel Error:", e);
+      res.json({ error: "CRASH", details: e.message, stack: e.stack });
+    }
+  });
+
+  // ==============================================================================
+  // 6. DEBUG & HEALTH CHECK
+  // ==============================================================================
+  router.get("/api/webhooks/test", (req: Request, res: Response) => {
+    res.json({ 
+      status: "OK", 
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || "development"
+    });
+  });
+
+  router.get("/api/debug/shop", async (req: Request, res: Response) => {
+    const shop = req.query.shop as string;
+    if (!shop) {
+      return res.json({ error: "Missing shop parameter" });
+    }
+    
+    const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
+    
+    if (!shopData) {
+      return res.json({ error: "Shop not found", shop });
+    }
+    
+    res.json({
+      shop: shopData.shopDomain,
+      hasToken: !!shopData.accessToken,
+      tokenPreview: shopData.accessToken ? `${shopData.accessToken.substring(0, 10)}...` : null,
+      scope: shopData.scope,
+      isInstalled: shopData.isInstalled,
+      installedAt: shopData.installedAt
+    });
+  });
+
+  app.use(router);
+}
