@@ -1,158 +1,119 @@
 import { register } from "@shopify/web-pixels-extension";
 
 register(async ({ analytics, browser, settings, init }) => {
-  // 1. Configuration
   const API_URL = "https://api.influtrak.com/api/tracking/event";
-  const ACCOUNT_ID = settings.accountID || "unknown";
 
-  // 2. Helper pour générer un session ID
-  const generateSessionId = () => {
-    return `sess_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
-  };
+  // --- FONCTIONS UTILITAIRES SÉCURISÉES ---
 
-  // 3. Récupérer l'UTM depuis l'URL actuelle
-  const getUtmFromUrl = () => {
-    try {
-      const url = init.context.document.location.href;
-      const urlObj = new URL(url);
-      return urlObj.searchParams.get("utm_campaign");
-    } catch (e) {
-      return null;
-    }
-  };
-
-  // 4. Gestion du localStorage (async dans le sandbox Shopify)
-  let cachedSessionId = null;
-  let cachedUtmCampaign = null;
-
-  const initSession = async () => {
-    try {
-      // Essayer de récupérer depuis localStorage
-      cachedSessionId = await browser.localStorage.getItem("inf_session_id");
-      cachedUtmCampaign = await browser.localStorage.getItem("inf_utm_campaign");
-      
-      // Générer un nouveau session ID si nécessaire
-      if (!cachedSessionId) {
-        cachedSessionId = generateSessionId();
-        await browser.localStorage.setItem("inf_session_id", cachedSessionId);
-      }
-
-      // Vérifier l'UTM dans l'URL actuelle
-      const urlUtm = getUtmFromUrl();
-      if (urlUtm) {
-        cachedUtmCampaign = urlUtm;
-        await browser.localStorage.setItem("inf_utm_campaign", urlUtm);
-      }
-    } catch (e) {
-      // Fallback si localStorage échoue
-      if (!cachedSessionId) {
-        cachedSessionId = generateSessionId();
-      }
-      const urlUtm = getUtmFromUrl();
-      if (urlUtm) {
-        cachedUtmCampaign = urlUtm;
-      }
-    }
-  };
-
-  // Initialiser la session immédiatement
-  await initSession();
-
-  // 5. Fonction pour envoyer les événements
-  const sendEvent = async (eventName, payload = {}) => {
-    // Toujours essayer de récupérer l'UTM depuis l'URL au cas où
-    const urlUtm = getUtmFromUrl();
-    if (urlUtm && urlUtm !== cachedUtmCampaign) {
-      cachedUtmCampaign = urlUtm;
+  // Fonction pour lire/écrire dans le stockage sans faire planter le script
+  const safeStorage = {
+    getItem: async (key) => {
       try {
-        await browser.localStorage.setItem("inf_utm_campaign", urlUtm);
-      } catch (e) {}
+        return await browser.localStorage.getItem(key);
+      } catch (e) {
+        return null; // Si bloqué (Safari), on renvoie null sans planter
+      }
+    },
+    setItem: async (key, value) => {
+      try {
+        await browser.localStorage.setItem(key, value);
+      } catch (e) {
+        // Si bloqué, on ne fait rien (tant pis pour la persistance long terme)
+      }
+    }
+  };
+
+  // Génération d'ID robuste (Même si le stockage est bloqué)
+  const getSessionId = async () => {
+    let id = await safeStorage.getItem("inf_session_id");
+    
+    // Si pas d'ID trouvé ou stockage bloqué, on en crée un nouveau
+    if (!id) {
+      id = `sess_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
+      // On tente de le sauvegarder pour la prochaine fois
+      await safeStorage.setItem("inf_session_id", id);
+    }
+    return id;
+  };
+
+  const getUtmCampaign = async () => {
+    // 1. Priorité : Lire l'URL actuelle
+    const urlString = init.context.document.location.href;
+    let utm = null;
+    
+    if (urlString) {
+      try {
+        const url = new URL(urlString);
+        utm = url.searchParams.get("utm_campaign");
+      } catch (e) {
+        console.error("URL parsing error", e);
+      }
     }
 
+    // 2. Si trouvé dans l'URL, on sauvegarde et on renvoie
+    if (utm) {
+      await safeStorage.setItem("inf_utm_campaign", utm);
+      return utm;
+    }
+
+    // 3. Sinon, on essaie de récupérer le dernier connu en mémoire
+    return await safeStorage.getItem("inf_utm_campaign");
+  };
+
+  // --- ENVOI DES DONNÉES ---
+
+  const sendEvent = async (eventName, payload = {}) => {
+    // On génère les infos (ne plantera plus grâce au safeStorage)
+    const sessionId = await getSessionId();
+    const utmSlug = await getUtmCampaign();
+
+    // MODE DEBUG : On envoie TOUT, même si pas d'UTM
     const body = {
       eventType: eventName,
-      sessionId: cachedSessionId,
-      slugUtm: cachedUtmCampaign || "direct",
-      accountId: ACCOUNT_ID,
-      timestamp: new Date().toISOString(),
+      sessionId: sessionId,
+      slugUtm: utmSlug || "UTM_NOT_FOUND", // On verra clairement si l'UTM manque
       ...payload
     };
 
-    // Utiliser fetch avec les bonnes options pour le sandbox Shopify
-    try {
-      await fetch(API_URL, {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(body),
-        keepalive: true
-      });
-    } catch (err) {
-      // Silencieux en production
-    }
+    fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      keepalive: true
+    }).catch(err => console.error("Pixel Error:", err));
   };
 
-  // 6. Abonnements aux événements
+  // --- ABONNEMENTS ---
 
-  // A. Vue de page - TOUJOURS envoyer (même sans UTM pour debug)
-  analytics.subscribe("page_viewed", async (event) => {
+  analytics.subscribe("page_view", async (event) => {
     await sendEvent("page_view", {
-      url: event.context.document.location.href,
-      referrer: event.context.document.referrer || null,
-      title: event.context.document.title || null
+      url: event.context.document.location.href
     });
   });
 
-  // B. Produit vu
   analytics.subscribe("product_viewed", async (event) => {
-    const product = event.data.productVariant;
     await sendEvent("product_view", {
-      productId: product?.product?.id,
-      productTitle: product?.product?.title,
-      variantId: product?.id,
-      price: product?.price?.amount
+      url: event.context.document.location.href
     });
   });
 
-  // C. Ajout au panier
   analytics.subscribe("product_added_to_cart", async (event) => {
     await sendEvent("add_to_cart", {
       productId: event.data.cartLine?.merchandise?.product?.id,
-      productTitle: event.data.cartLine?.merchandise?.product?.title,
-      variantId: event.data.cartLine?.merchandise?.id,
-      quantity: event.data.cartLine?.quantity,
-      price: event.data.cartLine?.merchandise?.price?.amount
+      quantity: event.data.cartLine?.quantity
     });
   });
 
-  // D. Début du checkout
-  analytics.subscribe("checkout_started", async (event) => {
-    const checkout = event.data.checkout;
-    await sendEvent("checkout_started", {
-      totalPrice: checkout?.totalPrice?.amount,
-      currency: checkout?.totalPrice?.currencyCode,
-      itemCount: checkout?.lineItems?.length
-    });
-  });
-
-  // E. Achat complété
   analytics.subscribe("checkout_completed", async (event) => {
     const checkout = event.data.checkout;
-
-    // Récupérer le code promo
-    const promoCode = checkout.discountApplications && checkout.discountApplications.length > 0
-      ? checkout.discountApplications[0].title
-      : null;
+    const promoCode = checkout.discountApplications?.[0]?.title || null;
 
     await sendEvent("purchase", {
-      revenue: checkout.totalPrice?.amount,
-      currency: checkout.totalPrice?.currencyCode,
+      revenue: checkout.totalPrice.amount,
+      currency: checkout.totalPrice.currencyCode,
       orderId: checkout.order?.id,
       promoCode: promoCode,
-      promoCodeUsed: !!promoCode,
-      geoCountry: checkout.shippingAddress?.countryCode,
-      geoCity: checkout.shippingAddress?.city
+      promoCodeUsed: !!promoCode
     });
   });
 });
