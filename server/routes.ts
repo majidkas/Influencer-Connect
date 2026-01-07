@@ -132,6 +132,48 @@ export async function registerRoutes(server: Server, app: Express) {
       const allInfluencers = await db.select().from(influencers);
       const allEvents = await db.select().from(events);
 
+// Get shop data for currency and products
+const [shopData] = await db.select().from(shops).limit(1);
+let shopifyProducts: any[] = [];
+let currency = "EUR";
+
+if (shopData && shopData.accessToken) {
+  try {
+    const client = new shopify.clients.Graphql({
+      session: {
+        shop: shopData.shopDomain,
+        accessToken: shopData.accessToken,
+      } as any
+    });
+    
+    const shopResponse = await client.request(`
+      query {
+        shop {
+          currencyCode
+        }
+      }
+    `);
+    currency = (shopResponse as any).data?.shop?.currencyCode || "EUR";
+    
+    const productsResponse = await client.request(`
+      query {
+        products(first: 100) {
+          nodes {
+            handle
+            title
+            featuredImage {
+              url
+            }
+          }
+        }
+      }
+    `);
+    shopifyProducts = (productsResponse as any).data?.products?.nodes || [];
+  } catch (e) {
+    console.error("Shopify API error:", e);
+  }
+}
+
       const stats = allCampaigns.map(campaign => {
         const influencer = allInfluencers.find(inf => inf.id === campaign.influencerId);
         const campaignEvents = allEvents.filter(e => e.utmCampaign === campaign.slugUtm);
@@ -158,9 +200,22 @@ export async function registerRoutes(server: Server, app: Express) {
   if (!payload?.promoCode || !campaign.promoCode) return false;
   return payload.promoCode.toLowerCase() === campaign.promoCode.toLowerCase();
 }).length,
-          revenue,
+revenue,
           totalCost,
-          roas
+          roas,
+          productImage: (() => {
+            if (!campaign.productUrl) return null;
+            const handle = campaign.productUrl.split('/products/')[1]?.split('?')[0];
+            const product = shopifyProducts.find((p: any) => p.handle === handle);
+            return product?.featuredImage?.url || null;
+          })(),
+          productTitle: (() => {
+            if (!campaign.productUrl) return null;
+            const handle = campaign.productUrl.split('/products/')[1]?.split('?')[0];
+            const product = shopifyProducts.find((p: any) => p.handle === handle);
+            return product?.title || null;
+          })(),
+          currency
         };
       });
       res.json(stats);

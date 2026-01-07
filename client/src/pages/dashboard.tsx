@@ -24,10 +24,10 @@ import { useToast } from "@/hooks/use-toast";
 import { Users, Megaphone, DollarSign, TrendingUp, MousePointer, ShoppingCart, Package, Tag, Copy, Check, Link, CreditCard, Image } from "lucide-react";
 import type { CampaignWithStats } from "@shared/schema";
 
-const formatCurrency = (amount: number): string => {
-  return new Intl.NumberFormat("en-US", {
+const formatCurrency = (amount: number, currency: string = "EUR"): string => {
+  return new Intl.NumberFormat("fr-FR", {
     style: "currency",
-    currency: "USD",
+    currency: currency,
   }).format(amount);
 };
 
@@ -138,37 +138,49 @@ function CopyLinkButton({ campaign }: { campaign: CampaignWithStats }) {
   );
 }
 
-function ProductCell({ campaign }: { campaign: CampaignWithStats }) {
-  const productName = campaign.productUrl 
-    ? campaign.productUrl.split('/products/')[1]?.split('?')[0]?.replace(/-/g, ' ') || "Produit"
-    : null;
 
-  if (!productName) {
+
+
+function ProductCell({ campaign }: { campaign: CampaignWithStats }) {
+  const productTitle = (campaign as any).productTitle;
+  const productImage = (campaign as any).productImage;
+  
+  if (!productTitle && !campaign.productUrl) {
     return <span className="text-muted-foreground">-</span>;
   }
 
-  const truncatedName = productName.length > 20 
-    ? productName.substring(0, 20) + "..." 
-    : productName;
+  const displayName = productTitle || campaign.productUrl?.split('/products/')[1]?.split('?')[0]?.replace(/-/g, ' ') || "Produit";
+  const truncatedName = displayName.length > 20 
+    ? displayName.substring(0, 20) + "..." 
+    : displayName;
 
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
           <div className="flex items-center gap-2 max-w-[150px]">
-            <div className="h-8 w-8 bg-muted rounded flex items-center justify-center flex-shrink-0">
-              <Image className="h-4 w-4 text-muted-foreground" />
-            </div>
+            {productImage && (
+              <img 
+                src={productImage} 
+                alt={displayName}
+                className="h-8 w-8 object-cover rounded flex-shrink-0"
+              />
+            )}
             <span className="text-sm truncate capitalize">{truncatedName}</span>
           </div>
         </TooltipTrigger>
         <TooltipContent>
-          <p className="capitalize">{productName}</p>
+          <p className="capitalize">{displayName}</p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );
 }
+
+
+
+
+
 
 export default function Dashboard() {
   const { data: stats, isLoading: statsLoading } = useQuery<{
@@ -340,10 +352,10 @@ export default function Dashboard() {
                         )}
                       </TableCell>
                       <TableCell className="text-right tabular-nums font-medium">
-                        {formatCurrency(campaign.revenue)}
+                       {formatCurrency(campaign.revenue, (campaign as any).currency)}
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">
-                        {formatCurrency(campaign.totalCost)}
+                       {formatCurrency(campaign.totalCost, (campaign as any).currency)}
                       </TableCell>
                       <TableCell className="text-right">
                         <RoiBadge roi={campaign.roas} />
