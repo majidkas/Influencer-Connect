@@ -1,12 +1,11 @@
-api_version = "2024-10"
 uid = "c5fcf820-3fb1-017e-8fe4-d4f9e935804a56febac2"
 type = "web_pixel_extension"
 name = "Influencer Tracking Pixel"
 runtime_context = "strict"
 
 [customer_privacy]
-analytics = false
-marketing = false
+analytics = true
+marketing = true
 preferences = false
 sale_of_data = "enabled"
 
@@ -20,6 +19,3 @@ type = "single_line_text_field"
 validations = [
   { name = "min", value = "1" }
 ]
-
-[[network_access]]
-hosts = ["https://api.influtrak.com"]
