@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -292,17 +292,26 @@ const [socialAccounts, setSocialAccounts] = useState<SocialAccountFormData[]>(
 
   const [imageInputType, setImageInputType] = useState<"url" | "upload">("url");
 
-const form = useForm<InfluencerFormData>({
-    resolver: zodResolver(influencerFormSchema),
-    defaultValues: {
-      name: influencer?.name || "",
-      email: influencer?.email || "",
-      profileImageUrl: influencer?.profileImageUrl || "",
-      gender: (influencer as any)?.gender || undefined,
-      internalRating: influencer?.internalRating || 0,
-      internalNotes: influencer?.internalNotes || "",
-    },
-  });
+// Reset form when dialog opens or influencer changes
+  useEffect(() => {
+    if (open) {
+      form.reset({
+        name: influencer?.name || "",
+        email: influencer?.email || "",
+        profileImageUrl: influencer?.profileImageUrl || "",
+        gender: (influencer as any)?.gender || undefined,
+        internalRating: influencer?.internalRating || 0,
+        internalNotes: influencer?.internalNotes || "",
+      });
+      setSocialAccounts(
+        influencer?.socialAccounts?.map((a) => ({
+          platform: a.platform as "instagram" | "tiktok" | "snapchat" | "youtube",
+          handle: a.handle,
+          followersCount: a.followersCount || 0,
+        })) || []
+      );
+    }
+  }, [open, influencer, form]);
 
   const createMutation = useMutation({
     mutationFn: async (data: InfluencerFormData & { socialAccounts: SocialAccountFormData[] }) => {
@@ -310,7 +319,7 @@ const form = useForm<InfluencerFormData>({
       return response.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/influencers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/influencers/stats"] });
       toast({ title: "Influencer created successfully" });
       onOpenChange(false);
     },
@@ -324,8 +333,8 @@ const form = useForm<InfluencerFormData>({
       const response = await apiRequest("PATCH", `/api/influencers/${influencer?.id}`, data);
       return response.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/influencers"] });
+ onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/influencers/stats"] });
       toast({ title: "Influencer updated successfully" });
       onOpenChange(false);
     },
@@ -616,8 +625,8 @@ const { data: influencers, isLoading } = useQuery<InfluencerWithStats[]>({
     mutationFn: async (id: string) => {
       await apiRequest("DELETE", `/api/influencers/${id}`);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/influencers"] });
+onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/influencers/stats"] });
       toast({ title: "Influencer deleted successfully" });
     },
     onError: () => {
