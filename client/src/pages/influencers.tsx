@@ -181,78 +181,7 @@ function InfluencerCard({
   );
 }
 
-function InfluencerCard({
-  influencer,
-  onEdit,
-  onDelete,
-}: {
-  influencer: InfluencerWithSocials;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <Card className="hover-elevate" data-testid={`card-influencer-${influencer.id}`}>
-      <CardHeader className="flex flex-row items-start gap-4 pb-2">
-        <InfluencerAvatar
-          name={influencer.name}
-          imageUrl={influencer.profileImageUrl}
-          size="lg"
-        />
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-lg truncate" data-testid="text-influencer-name">
-            {influencer.name}
-          </h3>
-          {influencer.email && (
-            <p className="text-sm text-muted-foreground truncate">{influencer.email}</p>
-          )}
-          <div className="mt-1">
-            <StarRating rating={influencer.internalRating || 0} size="sm" />
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {influencer.socialAccounts && influencer.socialAccounts.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {influencer.socialAccounts.map((account) => (
-              <SocialBadge
-                key={account.id}
-                platform={account.platform}
-                handle={account.handle}
-                followersCount={account.followersCount || 0}
-              />
-            ))}
-          </div>
-        )}
-        {influencer.internalNotes && (
-          <p className="text-sm text-muted-foreground line-clamp-2">
-            {influencer.internalNotes}
-          </p>
-        )}
-      </CardContent>
-      <CardFooter className="flex justify-end gap-2 pt-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onEdit}
-          data-testid="button-edit-influencer"
-        >
-          <Pencil className="h-4 w-4 mr-1" />
-          Edit
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onDelete}
-          className="text-destructive hover:text-destructive"
-          data-testid="button-delete-influencer"
-        >
-          <Trash2 className="h-4 w-4 mr-1" />
-          Delete
-        </Button>
-      </CardFooter>
-    </Card>
-  );
-}
+
 
 function SocialAccountForm({
   onAdd,
