@@ -359,16 +359,102 @@ router.put("/api/campaigns/:id", async (req: Request, res: Response) => {
     }
   });
 
-  router.get("/api/influencers", async (req, res) => {
-    const all = await db.select().from(influencers).orderBy(desc(influencers.createdAt));
-    res.json(all);
+router.get("/api/influencers", async (req, res) => {
+    try {
+      const allInfluencers = await db.select().from(influencers).orderBy(desc(influencers.createdAt));
+      const allSocialAccounts = await db.select().from(socialAccounts);
+      
+      const result = allInfluencers.map(inf => ({
+        ...inf,
+        socialAccounts: allSocialAccounts.filter(s => s.influencerId === inf.id)
+      }));
+      
+      res.json(result);
+    } catch (e) {
+      console.error("Get Influencers Error:", e);
+      res.status(500).json({ error: "Failed to fetch influencers" });
+    }
   });
 
-  router.post("/api/influencers", async (req, res) => {
-    const { name, email, instagramHandle } = req.body;
-    const newInf = await db.insert(influencers).values({ name, email, instagramHandle }).returning();
-    res.json(newInf[0]);
+router.post("/api/influencers", async (req, res) => {
+    try {
+      const { name, email, profileImageUrl, gender, internalRating, internalNotes, socialAccounts: socialAccountsData } = req.body;
+      
+      const [newInf] = await db.insert(influencers).values({ 
+        name, 
+        email: email || null, 
+        profileImageUrl: profileImageUrl || null,
+        gender: gender || null,
+        internalRating: internalRating || 0,
+        internalNotes: internalNotes || null
+      }).returning();
+      
+      // Insert social accounts if provided
+      if (socialAccountsData && socialAccountsData.length > 0) {
+        for (const account of socialAccountsData) {
+          await db.insert(socialAccounts).values({
+            influencerId: newInf.id,
+            platform: account.platform,
+            handle: account.handle,
+            followersCount: account.followersCount || 0
+          });
+        }
+      }
+      
+      // Return influencer with social accounts
+      const accounts = await db.select().from(socialAccounts).where(eq(socialAccounts.influencerId, newInf.id));
+      res.json({ ...newInf, socialAccounts: accounts });
+    } catch (e) {
+      console.error("Create Influencer Error:", e);
+      res.status(500).json({ error: "Create failed" });
+    }
   });
+
+
+
+router.patch("/api/influencers/:id", async (req: Request, res: Response) => {
+    try {
+      const { name, email, profileImageUrl, gender, internalRating, internalNotes, socialAccounts: socialAccountsData } = req.body;
+      
+      const [updated] = await db.update(influencers)
+        .set({ 
+          name, 
+          email: email || null, 
+          profileImageUrl: profileImageUrl || null,
+          gender: gender || null,
+          internalRating: internalRating || 0,
+          internalNotes: internalNotes || null
+        })
+        .where(eq(influencers.id, req.params.id))
+        .returning();
+      
+      if (!updated) {
+        return res.status(404).json({ error: "Influencer not found" });
+      }
+      
+      // Update social accounts: delete old ones and insert new ones
+      await db.delete(socialAccounts).where(eq(socialAccounts.influencerId, req.params.id));
+      
+      if (socialAccountsData && socialAccountsData.length > 0) {
+        for (const account of socialAccountsData) {
+          await db.insert(socialAccounts).values({
+            influencerId: req.params.id,
+            platform: account.platform,
+            handle: account.handle,
+            followersCount: account.followersCount || 0
+          });
+        }
+      }
+      
+      // Return influencer with social accounts
+      const accounts = await db.select().from(socialAccounts).where(eq(socialAccounts.influencerId, req.params.id));
+      res.json({ ...updated, socialAccounts: accounts });
+    } catch (e) {
+      console.error("Update Influencer Error:", e);
+      res.status(500).json({ error: "Update failed" });
+    }
+  });
+
 
   router.delete("/api/influencers/:id", async (req: Request, res: Response) => {
     try {
