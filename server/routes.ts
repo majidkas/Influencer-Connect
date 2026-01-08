@@ -2,7 +2,7 @@ import { type Express, type Request, type Response, Router } from "express";
 import { type Server } from "http";
 import { shopify } from "./shopify";
 import { db } from "./db";
-import { shops, campaigns, influencers, events, orders } from "@shared/schema";
+import { shops, campaigns, influencers, events, orders, socialAccounts } from "@shared/schema";
 import { eq, desc, sql } from "drizzle-orm";
 import multer from "multer";
 import path from "path";
