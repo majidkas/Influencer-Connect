@@ -35,7 +35,7 @@ import { InfluencerAvatar } from "@/components/influencer-avatar";
 import { StarRating } from "@/components/star-rating";
 import { SocialBadge } from "@/components/social-badge";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Upload, Link as LinkIcon, Users, X } from "lucide-react";
+import { Plus, Pencil, Trash2, Upload, Link as LinkIcon, Users, X, Megaphone, DollarSign, TrendingUp } from "lucide-react";
 import type { InfluencerWithSocials, InsertInfluencer, InsertSocialAccount } from "@shared/schema";
 
 const influencerFormSchema = z.object({
@@ -57,22 +57,126 @@ const socialAccountSchema = z.object({
 
 type SocialAccountFormData = z.infer<typeof socialAccountSchema>;
 
-function InfluencerCardSkeleton() {
+interface InfluencerWithStats extends InfluencerWithSocials {
+  totalCampaigns: number;
+  activeCampaigns: number;
+  totalCost: number;
+  totalRevenue: number;
+  roas: number;
+}
+
+function InfluencerCard({
+  influencer,
+  onEdit,
+  onDelete,
+}: {
+  influencer: InfluencerWithStats;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const gender = (influencer as any).gender;
+  const bgColor = gender === "female" 
+    ? "bg-pink-50 dark:bg-pink-950/20" 
+    : gender === "male" 
+    ? "bg-blue-50 dark:bg-blue-950/20" 
+    : "";
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat("fr-FR", {
+      style: "currency",
+      currency: "EUR",
+    }).format(amount);
+  };
+
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-start gap-4">
-        <Skeleton className="h-16 w-16 rounded-full" />
-        <div className="flex-1 space-y-2">
-          <Skeleton className="h-5 w-32" />
-          <Skeleton className="h-4 w-24" />
+    <Card className={`hover-elevate ${bgColor}`} data-testid={`card-influencer-${influencer.id}`}>
+      <CardHeader className="flex flex-row items-start gap-4 pb-2">
+        {influencer.profileImageUrl ? (
+          <img 
+            src={influencer.profileImageUrl} 
+            alt={influencer.name}
+            className="h-16 w-16 rounded-full object-cover"
+          />
+        ) : (
+          <InfluencerAvatar
+            name={influencer.name}
+            imageUrl={influencer.profileImageUrl}
+            size="lg"
+          />
+        )}
+        <div className="flex-1 min-w-0">
+          <h3 className="font-semibold text-lg truncate" data-testid="text-influencer-name">
+            {influencer.name}
+          </h3>
+          {influencer.email && (
+            <p className="text-sm text-muted-foreground truncate">{influencer.email}</p>
+          )}
+          <div className="mt-1">
+            <StarRating rating={influencer.internalRating || 0} size="sm" />
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="flex flex-wrap gap-2">
-          <Skeleton className="h-6 w-24" />
-          <Skeleton className="h-6 w-20" />
+        {influencer.socialAccounts && influencer.socialAccounts.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {influencer.socialAccounts.map((account) => (
+              <SocialBadge
+                key={account.id}
+                platform={account.platform}
+                handle={account.handle}
+                followersCount={account.followersCount || 0}
+              />
+            ))}
+          </div>
+        )}
+        
+        {/* Stats */}
+        <div className="grid grid-cols-2 gap-2 pt-2 border-t">
+          <div className="flex items-center gap-1 text-sm">
+            <Megaphone className="h-4 w-4 text-muted-foreground" />
+            <span className="text-muted-foreground">Campaigns:</span>
+            <span className="font-medium">{influencer.activeCampaigns}/{influencer.totalCampaigns}</span>
+          </div>
+          <div className="flex items-center gap-1 text-sm">
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            <span className="text-muted-foreground">ROAS:</span>
+            <span className={`font-medium ${influencer.roas >= 1 ? "text-green-600" : influencer.roas > 0 ? "text-red-600" : ""}`}>
+              {influencer.roas.toFixed(2)}
+            </span>
+          </div>
+          <div className="flex items-center gap-1 text-sm">
+            <DollarSign className="h-4 w-4 text-red-500" />
+            <span className="text-muted-foreground">Coût:</span>
+            <span className="font-medium">{formatCurrency(influencer.totalCost)}</span>
+          </div>
+          <div className="flex items-center gap-1 text-sm">
+            <DollarSign className="h-4 w-4 text-green-500" />
+            <span className="text-muted-foreground">Rev:</span>
+            <span className="font-medium">{formatCurrency(influencer.totalRevenue)}</span>
+          </div>
         </div>
       </CardContent>
+      <CardFooter className="flex justify-end gap-2 pt-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onEdit}
+          data-testid="button-edit-influencer"
+        >
+          <Pencil className="h-4 w-4 mr-1" />
+          Edit
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onDelete}
+          className="text-destructive hover:text-destructive"
+          data-testid="button-delete-influencer"
+        >
+          <Trash2 className="h-4 w-4 mr-1" />
+          Delete
+        </Button>
+      </CardFooter>
     </Card>
   );
 }
@@ -372,7 +476,7 @@ onChange={async (e) => {
 
 
 
-                  
+
                 />
               </div>
 
@@ -554,8 +658,8 @@ export default function Influencers() {
   const [editingInfluencer, setEditingInfluencer] = useState<InfluencerWithSocials | undefined>();
   const { toast } = useToast();
 
-  const { data: influencers, isLoading } = useQuery<InfluencerWithSocials[]>({
-    queryKey: ["/api/influencers"],
+const { data: influencers, isLoading } = useQuery<InfluencerWithStats[]>({
+    queryKey: ["/api/influencers/stats"],
   });
 
   const deleteMutation = useMutation({

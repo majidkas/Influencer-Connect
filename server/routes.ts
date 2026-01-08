@@ -379,6 +379,57 @@ router.put("/api/campaigns/:id", async (req: Request, res: Response) => {
     }
   });
 
+
+  // Get influencers with campaign stats
+  router.get("/api/influencers/stats", async (req: Request, res: Response) => {
+    try {
+      const allInfluencers = await db.select().from(influencers);
+      const allSocialAccounts = await db.select().from(socialAccounts);
+      const allCampaigns = await db.select().from(campaigns);
+      const allEvents = await db.select().from(events);
+
+      const influencersWithStats = allInfluencers.map(influencer => {
+        const influencerCampaigns = allCampaigns.filter(c => c.influencerId === influencer.id);
+        const activeCampaigns = influencerCampaigns.filter(c => c.status === 'active');
+        
+        let totalRevenue = 0;
+        let totalCost = 0;
+
+        influencerCampaigns.forEach(campaign => {
+          const campaignEvents = allEvents.filter(e => 
+            e.utmCampaign === campaign.slugUtm || 
+            (e.payload as any)?.slugUtm === campaign.slugUtm
+          );
+          const purchaseEvents = campaignEvents.filter(e => e.eventType === 'purchase');
+          const revenue = purchaseEvents.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
+          
+          const fixedCost = campaign.costFixed || 0;
+          const commissionCost = revenue * ((campaign.commissionPercent || 0) / 100);
+          
+          totalRevenue += revenue;
+          totalCost += fixedCost + commissionCost;
+        });
+
+        const roas = totalCost > 0 ? totalRevenue / totalCost : 0;
+
+        return {
+          ...influencer,
+          socialAccounts: allSocialAccounts.filter(s => s.influencerId === influencer.id),
+          totalCampaigns: influencerCampaigns.length,
+          activeCampaigns: activeCampaigns.length,
+          totalCost,
+          totalRevenue,
+          roas
+        };
+      });
+
+      res.json(influencersWithStats);
+    } catch (error) {
+      console.error("GET Influencers Stats Error:", error);
+      res.status(500).json({ error: "Failed to fetch influencers stats" });
+    }
+  });
+
   // ==============================================================================
   // 4. TRACKING & WEBHOOKS
   // ==============================================================================
