@@ -290,7 +290,20 @@ const [socialAccounts, setSocialAccounts] = useState<SocialAccountFormData[]>(
 
 
 
-  const [imageInputType, setImageInputType] = useState<"url" | "upload">("url");
+const [imageInputType, setImageInputType] = useState<"url" | "upload">("url");
+
+  const form = useForm<InfluencerFormData>({
+    resolver: zodResolver(influencerFormSchema),
+    defaultValues: {
+      name: influencer?.name || "",
+      email: influencer?.email || "",
+      profileImageUrl: influencer?.profileImageUrl || "",
+      gender: (influencer as any)?.gender || undefined,
+      internalRating: influencer?.internalRating || 0,
+      internalNotes: influencer?.internalNotes || "",
+    },
+  });
+
 
 // Reset form when dialog opens or influencer changes
   useEffect(() => {
