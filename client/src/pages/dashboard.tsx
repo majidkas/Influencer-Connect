@@ -21,8 +21,22 @@ import { InfluencerAvatar } from "@/components/influencer-avatar";
 import { RoiBadge } from "@/components/roi-badge";
 import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
-import { Users, Megaphone, DollarSign, TrendingUp, MousePointer, ShoppingCart, Package, Tag, Copy, Check, Link, CreditCard, Image } from "lucide-react";
+import { 
+  Users, Megaphone, DollarSign, TrendingUp, MousePointer, ShoppingCart, 
+  Package, Tag, Copy, Check, Link, CreditCard, Home 
+} from "lucide-react";
 import type { CampaignWithStats } from "@shared/schema";
+
+// --- STATS ÉTENDUES ---
+// On étend l'interface pour inclure les nouveaux champs (si pas déjà dans schema)
+interface CampaignDashboardStats extends CampaignWithStats {
+  revenuePromoOnly?: number;
+  conversionRate?: number;
+  currency?: string;
+  productImage?: string | null;
+  productTitle?: string | null;
+  targetType?: string;
+}
 
 const formatCurrency = (amount: number, currency: string = "EUR"): string => {
   return new Intl.NumberFormat("fr-FR", {
@@ -87,11 +101,16 @@ function DashboardTableSkeleton() {
   );
 }
 
-function CopyLinkButton({ campaign }: { campaign: CampaignWithStats }) {
+function CopyLinkButton({ campaign }: { campaign: CampaignDashboardStats }) {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
 
   const getSponsoredLink = () => {
+    // Si Homepage
+    if (campaign.targetType === "homepage") {
+      return `?utm_campaign=${campaign.slugUtm}`; // Simplifié pour affichage dashboard
+    }
+    // Si Product
     if (campaign.productUrl && campaign.slugUtm) {
       const separator = campaign.productUrl.includes("?") ? "&" : "?";
       return `${campaign.productUrl}${separator}utm_campaign=${campaign.slugUtm}`;
@@ -102,12 +121,14 @@ function CopyLinkButton({ campaign }: { campaign: CampaignWithStats }) {
   const handleCopy = async () => {
     const link = getSponsoredLink();
     if (link) {
+      // Pour copier un lien complet valide, il faudrait le domaine. 
+      // Ici on copie ce qu'on a, ou on reconstruit si possible.
       await navigator.clipboard.writeText(link);
       setCopied(true);
-      toast({ title: "Lien sponsorisé copié" });
+      toast({ title: "Lien copié" });
       setTimeout(() => setCopied(false), 2000);
     } else {
-      toast({ title: "URL produit manquante", variant: "destructive" });
+      toast({ title: "Lien non disponible", variant: "destructive" });
     }
   };
 
@@ -127,29 +148,39 @@ function CopyLinkButton({ campaign }: { campaign: CampaignWithStats }) {
             className="h-8 w-8 p-0"
             onClick={handleCopy}
           >
-            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          <p>Copier le lien sponsorisé</p>
+          <p>Copier le lien</p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );
 }
 
+function TargetCell({ campaign }: { campaign: CampaignDashboardStats }) {
+  // Cas Homepage
+  if (campaign.targetType === "homepage") {
+    return (
+      <div className="flex items-center gap-2">
+        <div className="h-8 w-8 bg-muted rounded flex items-center justify-center text-muted-foreground">
+          <Home className="h-4 w-4" />
+        </div>
+        <span className="text-sm font-medium">Homepage</span>
+      </div>
+    );
+  }
 
-
-
-function ProductCell({ campaign }: { campaign: CampaignWithStats }) {
-  const productTitle = (campaign as any).productTitle;
-  const productImage = (campaign as any).productImage;
+  // Cas Product
+  const productTitle = campaign.productTitle;
+  const productImage = campaign.productImage;
   
   if (!productTitle && !campaign.productUrl) {
     return <span className="text-muted-foreground">-</span>;
   }
 
-  const displayName = productTitle || campaign.productUrl?.split('/products/')[1]?.split('?')[0]?.replace(/-/g, ' ') || "Produit";
+  const displayName = productTitle || "Product";
   const truncatedName = displayName.length > 20 
     ? displayName.substring(0, 20) + "..." 
     : displayName;
@@ -158,13 +189,15 @@ function ProductCell({ campaign }: { campaign: CampaignWithStats }) {
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className="flex items-center gap-2 max-w-[150px]">
-            {productImage && (
+          <div className="flex items-center gap-2 max-w-[180px]">
+            {productImage ? (
               <img 
                 src={productImage} 
                 alt={displayName}
                 className="h-8 w-8 object-cover rounded flex-shrink-0"
               />
+            ) : (
+              <div className="h-8 w-8 bg-muted rounded flex-shrink-0" />
             )}
             <span className="text-sm truncate capitalize">{truncatedName}</span>
           </div>
@@ -177,11 +210,6 @@ function ProductCell({ campaign }: { campaign: CampaignWithStats }) {
   );
 }
 
-
-
-
-
-
 export default function Dashboard() {
   const { data: stats, isLoading: statsLoading } = useQuery<{
     totalInfluencers: number;
@@ -193,7 +221,7 @@ export default function Dashboard() {
     queryKey: ["/api/stats"],
   });
 
-  const { data: campaigns, isLoading: campaignsLoading } = useQuery<CampaignWithStats[]>({
+  const { data: campaigns, isLoading: campaignsLoading } = useQuery<CampaignDashboardStats[]>({
     queryKey: ["/api/campaigns/stats"],
   });
 
@@ -269,97 +297,133 @@ export default function Dashboard() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="min-w-[180px]">Influencer</TableHead>
+                    {/* COLONNES REORDONNEES SELON CAHIER DES CHARGES */}
                     <TableHead className="min-w-[120px]">Campaign</TableHead>
-                    <TableHead className="min-w-[150px]">Product</TableHead>
-                    <TableHead className="text-center w-[60px]">
-                      <div className="flex items-center justify-center gap-1">
-                        <Link className="h-3 w-3" />
-                      </div>
-                    </TableHead>
+                    <TableHead className="min-w-[150px]">Influencer</TableHead>
+                    <TableHead className="min-w-[150px]">Target</TableHead>
+                    <TableHead className="text-center w-[50px]">Link</TableHead>
+                    <TableHead className="text-right">Cost</TableHead>
+                    
                     <TableHead className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <MousePointer className="h-3 w-3" />
-                        Clicks
+                        <MousePointer className="h-3 w-3" /> Clicks
                       </div>
                     </TableHead>
+                    
                     <TableHead className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <ShoppingCart className="h-3 w-3" />
-                        Cart
+                        <ShoppingCart className="h-3 w-3" /> Cart
                       </div>
                     </TableHead>
+
                     <TableHead className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <Package className="h-3 w-3" />
-                        Orders
+                        <Package className="h-3 w-3" /> Orders
                       </div>
                     </TableHead>
-                    <TableHead className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Tag className="h-3 w-3" />
-                        Promo
-                      </div>
+
+                    <TableHead className="text-right">Promo</TableHead>
+                    <TableHead className="text-right">Conv Rate</TableHead>
+
+                    <TableHead className="text-right min-w-[100px]">
+                      Revenue (1)
+                      <span className="block text-[10px] text-muted-foreground font-normal">Link + Code</span>
                     </TableHead>
-                    <TableHead className="text-right">Revenue</TableHead>
-                    <TableHead className="text-right">Costs</TableHead>
+
+                    <TableHead className="text-right min-w-[100px]">
+                      Revenue (2)
+                      <span className="block text-[10px] text-muted-foreground font-normal">Code Only</span>
+                    </TableHead>
+
                     <TableHead className="text-right">ROAS</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {campaigns.map((campaign) => (
                     <TableRow key={campaign.id} data-testid={`row-campaign-${campaign.id}`}>
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <InfluencerAvatar
-                            name={campaign.influencer.name}
-                            imageUrl={campaign.influencer.profileImageUrl}
-                            size="md"
-                          />
-                          <span className="font-medium">{campaign.influencer.name}</span>
-                        </div>
-                      </TableCell>
+                      
+                      {/* Campaign Name */}
                       <TableCell>
                         <div className="flex flex-col gap-1">
-                          <span className="font-medium">{campaign.name}</span>
+                          <span className="font-medium whitespace-nowrap">{campaign.name}</span>
                           <StatusBadge status={campaign.status || "active"} />
                         </div>
                       </TableCell>
+
+                      {/* Influencer */}
                       <TableCell>
-                        <ProductCell campaign={campaign} />
+                        <div className="flex items-center gap-2">
+                          <InfluencerAvatar
+                            name={campaign.influencer?.name || "?"}
+                            imageUrl={campaign.influencer?.profileImageUrl}
+                            size="sm"
+                          />
+                          <span className="font-medium text-sm whitespace-nowrap">{campaign.influencer?.name}</span>
+                        </div>
                       </TableCell>
+
+                      {/* Target (Product or Homepage) */}
+                      <TableCell>
+                        <TargetCell campaign={campaign} />
+                      </TableCell>
+
+                      {/* Link Copy */}
                       <TableCell className="text-center">
                         <CopyLinkButton campaign={campaign} />
                       </TableCell>
+
+                      {/* Cost */}
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                       {formatCurrency(campaign.totalCost || 0, campaign.currency)}
+                      </TableCell>
+
+                      {/* Clicks */}
                       <TableCell className="text-right tabular-nums">
                         {formatNumber(campaign.clicks)}
                       </TableCell>
+
+                      {/* Cart */}
                       <TableCell className="text-right tabular-nums">
                         {formatNumber(campaign.addToCarts)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">
+
+                      {/* Orders */}
+                      <TableCell className="text-right tabular-nums font-medium">
                         {formatNumber(campaign.orders)}
                       </TableCell>
+
+                      {/* Promo Code */}
                       <TableCell className="text-right tabular-nums">
                         {campaign.promoCode ? (
-                          <span>
-                            <span className="text-muted-foreground text-xs">{campaign.promoCode}</span>
-                            {" "}
-                            <span className="font-medium">({campaign.promoCodeUsage})</span>
-                          </span>
+                          <div className="flex flex-col items-end">
+                            <span className="text-xs bg-muted px-1 rounded">{campaign.promoCode}</span>
+                            <span className="text-[10px] text-muted-foreground">({campaign.promoCodeUsage})</span>
+                          </div>
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums font-medium">
-                       {formatCurrency(campaign.revenue, (campaign as any).currency)}
+
+                      {/* Conv Rate */}
+                      <TableCell className="text-right tabular-nums">
+                        {campaign.conversionRate ? `${campaign.conversionRate.toFixed(1)}%` : "0.0%"}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-muted-foreground">
-                       {formatCurrency(campaign.totalCost, (campaign as any).currency)}
+
+                      {/* Revenue (1) */}
+                      <TableCell className="text-right tabular-nums font-medium text-green-600">
+                       {formatCurrency(campaign.revenue || 0, campaign.currency)}
                       </TableCell>
+
+                      {/* Revenue (2) */}
+                      <TableCell className="text-right tabular-nums font-medium text-blue-600">
+                       {formatCurrency(campaign.revenuePromoOnly || 0, campaign.currency)}
+                      </TableCell>
+
+                      {/* ROAS */}
                       <TableCell className="text-right">
                         <RoiBadge roi={campaign.roas} />
                       </TableCell>
+
                     </TableRow>
                   ))}
                 </TableBody>
