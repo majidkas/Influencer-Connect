@@ -12,10 +12,9 @@ export async function registerRoutes(server: Server, app: Express) {
   const router = Router();
 
   // ==============================================================================
-  // 0. MIDDLEWARE DE SÉCURITÉ (CORS) - INDISPENSABLE POUR LE PIXEL
+  // 0. MIDDLEWARE DE SÉCURITÉ & CONFIG
   // ==============================================================================
   
-// Increase payload limit for file uploads
   app.use(require("express").json({ limit: "10mb" }));
   app.use(require("express").urlencoded({ limit: "10mb", extended: true }));
   app.use((req, res, next) => {
@@ -71,6 +70,7 @@ export async function registerRoutes(server: Server, app: Express) {
         console.error("[OAuth] Webhook error:", e);
       }
 
+      // Installation automatique du Pixel
       try {
         const client = new shopify.clients.Graphql({
           session: {
@@ -82,22 +82,15 @@ export async function registerRoutes(server: Server, app: Express) {
         const accountID = session.shop.replace('.myshopify.com', '');
         const settingsJson = JSON.stringify({ accountID: accountID });
 
-        const pixelResponse = await client.request(`
+        await client.request(`
           mutation {
             webPixelCreate(webPixel: { settings: ${JSON.stringify(settingsJson)} }) {
-              userErrors {
-                code
-                field
-                message
-              }
-              webPixel {
-                id
-                settings
-              }
+              userErrors { code field message }
+              webPixel { id settings }
             }
           }
         `);
-        console.log("✅ [OAuth] Pixel activated automatically:", pixelResponse);
+        console.log("✅ [OAuth] Pixel activated automatically");
       } catch (e) {
         console.error("❌ [OAuth] Pixel activation error:", e);
       }
@@ -120,7 +113,6 @@ export async function registerRoutes(server: Server, app: Express) {
 
       const shopName = shop.replace(".myshopify.com", "");
       const redirectUrl = `https://admin.shopify.com/store/${shopName}/apps/${process.env.SHOPIFY_API_KEY}`;
-      console.log(`✅ [OAuth] Installation complete, redirecting to: ${redirectUrl}`);
       return res.redirect(redirectUrl);
 
     } catch (error) {
@@ -130,93 +122,95 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 2. API DASHBOARD & STATS
+  // 2. API DASHBOARD & STATS (Calculs Avancés)
   // ==============================================================================
 
   router.get("/api/campaigns/stats", async (req: Request, res: Response) => {
     try {
+      const { sort } = req.query; // Pour le tri
+      
       const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
       const allInfluencers = await db.select().from(influencers);
       const allEvents = await db.select().from(events);
+      const allOrders = await db.select().from(orders); // Récupère les commandes (Revenue 2)
 
-// Get shop data for currency and products
-const [shopData] = await db.select().from(shops).limit(1);
-let shopifyProducts: any[] = [];
-let currency = "EUR";
+      // Get shop data
+      const [shopData] = await db.select().from(shops).limit(1);
+      let shopifyProducts: any[] = [];
+      let currency = "EUR";
 
-if (shopData && shopData.accessToken) {
-  try {
-    const client = new shopify.clients.Graphql({
-      session: {
-        shop: shopData.shopDomain,
-        accessToken: shopData.accessToken,
-      } as any
-    });
-    
-    const shopResponse = await client.request(`
-      query {
-        shop {
-          currencyCode
+      if (shopData && shopData.accessToken) {
+        try {
+          const client = new shopify.clients.Graphql({
+            session: { shop: shopData.shopDomain, accessToken: shopData.accessToken } as any
+          });
+          
+          const shopRes = await client.request(`query { shop { currencyCode } }`);
+          currency = (shopRes as any).data?.shop?.currencyCode || "EUR";
+          
+          const prodRes = await client.request(`query { products(first: 100) { nodes { handle title featuredImage { url } } } }`);
+          shopifyProducts = (prodRes as any).data?.products?.nodes || [];
+        } catch (e) {
+          console.error("Shopify API error (Stats):", e);
         }
       }
-    `);
-    currency = (shopResponse as any).data?.shop?.currencyCode || "EUR";
-    
-    const productsResponse = await client.request(`
-      query {
-        products(first: 100) {
-          nodes {
-            handle
-            title
-            featuredImage {
-              url
-            }
-          }
-        }
-      }
-    `);
-    shopifyProducts = (productsResponse as any).data?.products?.nodes || [];
-  } catch (e) {
-    console.error("Shopify API error:", e);
-  }
-}
 
-      const stats = allCampaigns.map(campaign => {
+      let stats = allCampaigns.map(campaign => {
         const influencer = allInfluencers.find(inf => inf.id === campaign.influencerId);
         const campaignEvents = allEvents.filter(e => e.utmCampaign === campaign.slugUtm);
 
+        // --- REVENUE (1) : Tracking UTM ---
         const clicks = campaignEvents.filter(e => e.eventType === 'page_view' || e.eventType === 'product_view').length;
-        const ordersCount = campaignEvents.filter(e => e.eventType === 'purchase').length;
-        const revenue = campaignEvents
-            .filter(e => e.eventType === 'purchase')
-            .reduce((acc, curr) => acc + (curr.revenue || 0), 0);
+        const purchaseEvents = campaignEvents.filter(e => e.eventType === 'purchase');
+        
+        const ordersCountUtm = purchaseEvents.length;
+        const revenueLink = purchaseEvents.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
 
-        const commissionCost = revenue * ((campaign.commissionPercent || 0) / 100);
+        // --- REVENUE (2) : Promo Code Only (Orders DB) ---
+        // On cherche les commandes qui ont utilisé le code promo de la campagne
+        const campaignPromoCode = campaign.promoCode ? campaign.promoCode.toLowerCase().trim() : null;
+        
+        const promoOrders = campaignPromoCode 
+          ? allOrders.filter(o => o.promoCode && o.promoCode.toLowerCase() === campaignPromoCode) 
+          : [];
+          
+        const revenuePromoOnly = promoOrders.reduce((acc, curr) => acc + (curr.totalPrice || 0), 0);
+        const promoCodeUsage = promoOrders.length;
+        
+        // Total Orders pour l'affichage (Priorité au plus grand nombre si chevauchement, ou simplement UTM + PromoOnly)
+        // Ici on simplifie : Orders = nombre de commandes via Promo Code (Source 2) car c'est souvent plus fiable pour l'influenceur
+        // Si pas de code promo, on prend le tracking UTM.
+        const totalOrders = campaignPromoCode ? promoCodeUsage : ordersCountUtm;
+
+        // --- ROI & CONVERSION ---
+        const commissionCost = revenueLink * ((campaign.commissionPercent || 0) / 100);
         const totalCost = (campaign.costFixed || 0) + commissionCost;
-        const roas = totalCost > 0 ? (revenue / totalCost) : 0;
+        const roas = totalCost > 0 ? (revenueLink / totalCost) : 0;
+        
+        // Conversion Rate = (Orders / Clicks) * 100
+        const conversionRate = clicks > 0 ? (totalOrders / clicks) * 100 : 0;
 
         return {
           ...campaign,
           influencer: influencer || null,
           clicks,
           addToCarts: campaignEvents.filter(e => e.eventType === 'add_to_cart').length,
-          orders: ordersCount,
-          promoCodeUsage: campaignEvents.filter(e => {
-  if (e.eventType !== 'purchase') return false;
-  const payload = e.payload as any;
-  if (!payload?.promoCode || !campaign.promoCode) return false;
-  return payload.promoCode.toLowerCase() === campaign.promoCode.toLowerCase();
-}).length,
-revenue,
+          orders: totalOrders, 
+          promoCodeUsage,
+          revenue: revenueLink,       // Revenue (1)
+          revenuePromoOnly,           // Revenue (2)
           totalCost,
           roas,
+          conversionRate,
           productImage: (() => {
+            if (campaign.targetType === 'homepage') return null; // Pas d'image pour homepage
             if (!campaign.productUrl) return null;
             const handle = campaign.productUrl.split('/products/')[1]?.split('?')[0];
             const product = shopifyProducts.find((p: any) => p.handle === handle);
             return product?.featuredImage?.url || null;
           })(),
           productTitle: (() => {
+            if (campaign.targetType === 'homepage') return "Homepage";
             if (!campaign.productUrl) return null;
             const handle = campaign.productUrl.split('/products/')[1]?.split('?')[0];
             const product = shopifyProducts.find((p: any) => p.handle === handle);
@@ -225,6 +219,21 @@ revenue,
           currency
         };
       });
+
+      // --- TRI (SORTING) ---
+      if (sort) {
+        switch (sort) {
+          case 'recent': stats.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime()); break;
+          case 'oldest': stats.sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime()); break;
+          case 'revenue_high': stats.sort((a, b) => b.revenue - a.revenue); break;
+          case 'revenue_low': stats.sort((a, b) => a.revenue - b.revenue); break;
+          case 'roas_high': stats.sort((a, b) => b.roas - a.roas); break;
+          case 'roas_low': stats.sort((a, b) => a.roas - b.roas); break;
+          case 'cost_high': stats.sort((a, b) => b.totalCost - a.totalCost); break;
+          case 'cost_low': stats.sort((a, b) => a.totalCost - b.totalCost); break;
+        }
+      }
+
       res.json(stats);
     } catch (error) {
       console.error("GET Campaign Stats Error:", error);
@@ -232,48 +241,42 @@ revenue,
     }
   });
 
-
-
   router.get("/api/stats", async (req, res) => {
     try {
       const infCount = await db.select({ count: sql<number>`count(*)` }).from(influencers);
       const activeCampCount = await db.select({ count: sql<number>`count(*)` }).from(campaigns).where(eq(campaigns.status, 'active'));
       const allPurchaseEvents = await db.select().from(events).where(eq(events.eventType, 'purchase'));
+      
       const totalRevenue = allPurchaseEvents.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
-
-      // Calculate total costs from all campaigns
+      
+      // Récupération globale pour le ROAS
       const allCampaigns = await db.select().from(campaigns);
+      
       const totalCosts = allCampaigns.reduce((acc, camp) => {
         const fixedCost = camp.costFixed || 0;
-        // Calculate commission based on campaign revenue from events
         const campaignRevenue = allPurchaseEvents
-          .filter(e => (e.payload as any)?.slugUtm === camp.slugUtm || e.utmCampaign === camp.slugUtm)
+          .filter(e => e.utmCampaign === camp.slugUtm)
           .reduce((sum, e) => sum + (e.revenue || 0), 0);
         const commissionCost = campaignRevenue * ((camp.commissionPercent || 0) / 100);
         return acc + fixedCost + commissionCost;
       }, 0);
 
-      // Calculate average ROAS = Total Revenue / Total Costs
       const averageRoas = totalCosts > 0 ? totalRevenue / totalCosts : 0;
 
       res.json({
         totalInfluencers: Number(infCount[0].count),
         activeCampaigns: Number(activeCampCount[0].count),
-        totalRevenue: totalRevenue,
-        totalCosts: totalCosts,
-        averageRoas: averageRoas
+        totalRevenue,
+        totalCosts,
+        averageRoas
       });
     } catch (e) {
       res.json({ totalInfluencers: 0, activeCampaigns: 0, totalRevenue: 0, totalCosts: 0, averageRoas: 0 });
     }
   });
 
-
-
-
-
   // ==============================================================================
-  // 3. API CRUD
+  // 3. API CRUD CAMPAGNES (Avec TargetType)
   // ==============================================================================
 
   router.get("/api/campaigns", async (req: Request, res: Response) => {
@@ -290,65 +293,72 @@ revenue,
     }
   });
 
-router.post("/api/campaigns", async (req: Request, res: Response) => {
-  try {
-    const { name, slug, slugUtm, discountType, discountValue, influencerId, promoCode, productUrl, costFixed, commissionPercent } = req.body;
-    let finalSlug = slug || slugUtm;
-    if (!finalSlug || finalSlug.trim() === "") {
-      finalSlug = name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
-      if (!finalSlug) finalSlug = `campagne-${Date.now()}`;
-    }
-    const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
-    const newCampaign = await db.insert(campaigns).values({
-      name,
-      slugUtm: finalSlug,
-      promoCode: promoCode || null,
-      productUrl: productUrl || null,
-      discountType,
-      discountValue: discountValue ? parseFloat(discountValue) : 0,
-      costFixed: costFixed ? parseFloat(costFixed) : 0,
-      commissionPercent: commissionPercent ? parseFloat(commissionPercent) : 0,
-      influencerId: cleanInfluencerId,
-      status: 'active',
-    }).returning();
-    res.json(newCampaign[0]);
-  } catch (e) {
-    console.error("Create Campaign Error:", e);
-    res.status(500).json({ error: "Create failed" });
-  }
-});
+  router.post("/api/campaigns", async (req: Request, res: Response) => {
+    try {
+      const { 
+        name, slug, slugUtm, discountType, discountValue, influencerId, 
+        promoCode, productUrl, costFixed, commissionPercent, targetType // NEW
+      } = req.body;
 
-
-router.put("/api/campaigns/:id", async (req: Request, res: Response) => {
-  try {
-    const { name, slugUtm, discountType, discountValue, influencerId, promoCode, productUrl, costFixed, commissionPercent, status } = req.body;
-    const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
-
-    const updated = await db.update(campaigns)
-      .set({
+      let finalSlug = slug || slugUtm;
+      if (!finalSlug || finalSlug.trim() === "") {
+        finalSlug = name.toLowerCase().replace(/ /g, '-').replace(/[^\w-]+/g, '');
+        if (!finalSlug) finalSlug = `campagne-${Date.now()}`;
+      }
+      const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
+      
+      const newCampaign = await db.insert(campaigns).values({
         name,
-        slugUtm,
+        slugUtm: finalSlug,
         promoCode: promoCode || null,
+        targetType: targetType || "product", // NEW
         productUrl: productUrl || null,
         discountType,
         discountValue: discountValue ? parseFloat(discountValue) : 0,
         costFixed: costFixed ? parseFloat(costFixed) : 0,
         commissionPercent: commissionPercent ? parseFloat(commissionPercent) : 0,
         influencerId: cleanInfluencerId,
-        status: status || 'active',
-      })
-      .where(eq(campaigns.id, req.params.id))
-      .returning();
+        status: 'active',
+      }).returning();
+      res.json(newCampaign[0]);
+    } catch (e) {
+      console.error("Create Campaign Error:", e);
+      res.status(500).json({ error: "Create failed" });
+    }
+  });
 
-    res.json(updated[0]);
-  } catch (e) {
-    console.error("Update Campaign Error:", e);
-    res.status(500).json({ error: "Update failed" });
-  }
-});
+  router.put("/api/campaigns/:id", async (req: Request, res: Response) => {
+    try {
+      const { 
+        name, slugUtm, discountType, discountValue, influencerId, 
+        promoCode, productUrl, costFixed, commissionPercent, status, targetType // NEW
+      } = req.body;
+      
+      const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
 
+      const updated = await db.update(campaigns)
+        .set({
+          name,
+          slugUtm,
+          promoCode: promoCode || null,
+          targetType: targetType || "product", // NEW
+          productUrl: productUrl || null,
+          discountType,
+          discountValue: discountValue ? parseFloat(discountValue) : 0,
+          costFixed: costFixed ? parseFloat(costFixed) : 0,
+          commissionPercent: commissionPercent ? parseFloat(commissionPercent) : 0,
+          influencerId: cleanInfluencerId,
+          status: status || 'active',
+        })
+        .where(eq(campaigns.id, req.params.id))
+        .returning();
 
-
+      res.json(updated[0]);
+    } catch (e) {
+      console.error("Update Campaign Error:", e);
+      res.status(500).json({ error: "Update failed" });
+    }
+  });
 
   router.delete("/api/campaigns/:id", async (req: Request, res: Response) => {
     try {
@@ -359,7 +369,11 @@ router.put("/api/campaigns/:id", async (req: Request, res: Response) => {
     }
   });
 
-router.get("/api/influencers", async (req, res) => {
+  // ==============================================================================
+  // 4. API CRUD INFLUENCEURS (Avec WhatsApp & Auto-Rating)
+  // ==============================================================================
+
+  router.get("/api/influencers", async (req, res) => {
     try {
       const allInfluencers = await db.select().from(influencers).orderBy(desc(influencers.createdAt));
       const allSocialAccounts = await db.select().from(socialAccounts);
@@ -368,28 +382,27 @@ router.get("/api/influencers", async (req, res) => {
         ...inf,
         socialAccounts: allSocialAccounts.filter(s => s.influencerId === inf.id)
       }));
-      
       res.json(result);
     } catch (e) {
-      console.error("Get Influencers Error:", e);
       res.status(500).json({ error: "Failed to fetch influencers" });
     }
   });
 
-router.post("/api/influencers", async (req, res) => {
+  router.post("/api/influencers", async (req, res) => {
     try {
-      const { name, email, profileImageUrl, gender, internalRating, internalNotes, socialAccounts: socialAccountsData } = req.body;
+      // NOTE: internalRating retiré, whatsapp ajouté
+      const { name, email, profileImageUrl, gender, internalNotes, whatsapp, socialAccounts: socialAccountsData } = req.body;
       
       const [newInf] = await db.insert(influencers).values({ 
         name, 
         email: email || null, 
         profileImageUrl: profileImageUrl || null,
         gender: gender || null,
-        internalRating: internalRating || 0,
-        internalNotes: internalNotes || null
+        // internalRating supprimé (calculé auto)
+        internalNotes: internalNotes || null,
+        whatsapp: whatsapp || null // NEW
       }).returning();
       
-      // Insert social accounts if provided
       if (socialAccountsData && socialAccountsData.length > 0) {
         for (const account of socialAccountsData) {
           await db.insert(socialAccounts).values({
@@ -401,7 +414,6 @@ router.post("/api/influencers", async (req, res) => {
         }
       }
       
-      // Return influencer with social accounts
       const accounts = await db.select().from(socialAccounts).where(eq(socialAccounts.influencerId, newInf.id));
       res.json({ ...newInf, socialAccounts: accounts });
     } catch (e) {
@@ -410,11 +422,9 @@ router.post("/api/influencers", async (req, res) => {
     }
   });
 
-
-
-router.patch("/api/influencers/:id", async (req: Request, res: Response) => {
+  router.patch("/api/influencers/:id", async (req: Request, res: Response) => {
     try {
-      const { name, email, profileImageUrl, gender, internalRating, internalNotes, socialAccounts: socialAccountsData } = req.body;
+      const { name, email, profileImageUrl, gender, internalNotes, whatsapp, socialAccounts: socialAccountsData } = req.body;
       
       const [updated] = await db.update(influencers)
         .set({ 
@@ -422,19 +432,16 @@ router.patch("/api/influencers/:id", async (req: Request, res: Response) => {
           email: email || null, 
           profileImageUrl: profileImageUrl || null,
           gender: gender || null,
-          internalRating: internalRating || 0,
-          internalNotes: internalNotes || null
+          internalNotes: internalNotes || null,
+          whatsapp: whatsapp || null // NEW
         })
         .where(eq(influencers.id, req.params.id))
         .returning();
       
-      if (!updated) {
-        return res.status(404).json({ error: "Influencer not found" });
-      }
+      if (!updated) return res.status(404).json({ error: "Influencer not found" });
       
-      // Update social accounts: delete old ones and insert new ones
+      // Update Socials
       await db.delete(socialAccounts).where(eq(socialAccounts.influencerId, req.params.id));
-      
       if (socialAccountsData && socialAccountsData.length > 0) {
         for (const account of socialAccountsData) {
           await db.insert(socialAccounts).values({
@@ -446,7 +453,6 @@ router.patch("/api/influencers/:id", async (req: Request, res: Response) => {
         }
       }
       
-      // Return influencer with social accounts
       const accounts = await db.select().from(socialAccounts).where(eq(socialAccounts.influencerId, req.params.id));
       res.json({ ...updated, socialAccounts: accounts });
     } catch (e) {
@@ -454,7 +460,6 @@ router.patch("/api/influencers/:id", async (req: Request, res: Response) => {
       res.status(500).json({ error: "Update failed" });
     }
   });
-
 
   router.delete("/api/influencers/:id", async (req: Request, res: Response) => {
     try {
@@ -465,14 +470,14 @@ router.patch("/api/influencers/:id", async (req: Request, res: Response) => {
     }
   });
 
-
-  // Get influencers with campaign stats
+  // --- STATS INFLUENCEURS & AUTO-RATING ---
   router.get("/api/influencers/stats", async (req: Request, res: Response) => {
     try {
       const allInfluencers = await db.select().from(influencers);
       const allSocialAccounts = await db.select().from(socialAccounts);
       const allCampaigns = await db.select().from(campaigns);
       const allEvents = await db.select().from(events);
+      const allOrders = await db.select().from(orders); // Pour Revenue (2) dans le ROAS global
 
       const influencersWithStats = allInfluencers.map(influencer => {
         const influencerCampaigns = allCampaigns.filter(c => c.influencerId === influencer.id);
@@ -480,23 +485,53 @@ router.patch("/api/influencers/:id", async (req: Request, res: Response) => {
         
         let totalRevenue = 0;
         let totalCost = 0;
+        let totalOrders = 0;
 
         influencerCampaigns.forEach(campaign => {
-          const campaignEvents = allEvents.filter(e => 
-            e.utmCampaign === campaign.slugUtm || 
-            (e.payload as any)?.slugUtm === campaign.slugUtm
-          );
-          const purchaseEvents = campaignEvents.filter(e => e.eventType === 'purchase');
-          const revenue = purchaseEvents.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
+          // Revenue 1 (UTM)
+          const campaignEvents = allEvents.filter(e => e.utmCampaign === campaign.slugUtm);
+          const rev1 = campaignEvents.filter(e => e.eventType === 'purchase').reduce((acc, curr) => acc + (curr.revenue || 0), 0);
           
+          // Revenue 2 (Promo Code)
+          const code = campaign.promoCode ? campaign.promoCode.toLowerCase() : null;
+          const rev2 = code 
+            ? allOrders.filter(o => o.promoCode && o.promoCode.toLowerCase() === code).reduce((acc, curr) => acc + (curr.totalPrice || 0), 0)
+            : 0;
+
+          // On prend le Max ou la somme ? Pour le ROAS global, prenons le Revenue (1) (Tracking) 
+          // ou le Revenue (2) si supérieur ? 
+          // Simplifions : On base le ROAS sur le Revenue (1) (Tracking direct) pour la fiabilité technique
+          // OU sur le Revenue (2) si dispo.
+          // LOGIQUE PROJET : On additionne tout le revenu généré (1 + 2 sans doublon c'est dur sans deduplication).
+          // Hypothèse : Revenue 2 inclut Revenue 1 si le code promo est utilisé.
+          // On va utiliser le Revenue le plus favorable pour l'influenceur pour calculer sa note.
+          const bestRevenue = Math.max(rev1, rev2);
+
           const fixedCost = campaign.costFixed || 0;
-          const commissionCost = revenue * ((campaign.commissionPercent || 0) / 100);
+          const commissionCost = bestRevenue * ((campaign.commissionPercent || 0) / 100);
           
-          totalRevenue += revenue;
+          totalRevenue += bestRevenue;
           totalCost += fixedCost + commissionCost;
+
+          // Count orders (approx)
+          totalOrders += (code ? allOrders.filter(o => o.promoCode === code).length : 0);
         });
 
         const roas = totalCost > 0 ? totalRevenue / totalCost : 0;
+
+        // CALCUL AUTO DE LA NOTE (ÉTOILES)
+        let calculatedRating = 0;
+        if (influencerCampaigns.length === 0) {
+          calculatedRating = 0; // Aucune campagne
+        } else if (roas < 0) {
+          calculatedRating = 1; // < 0 (Rouge)
+        } else if (roas >= 0 && roas < 2) {
+          calculatedRating = 1; // 0 à 1.99 (Rouge)
+        } else if (roas >= 2 && roas < 4) {
+          calculatedRating = 2; // 2 à 4 (Vert)
+        } else {
+          calculatedRating = 3; // > 4 (Vert super)
+        }
 
         return {
           ...influencer,
@@ -505,7 +540,9 @@ router.patch("/api/influencers/:id", async (req: Request, res: Response) => {
           activeCampaigns: activeCampaigns.length,
           totalCost,
           totalRevenue,
-          roas
+          totalOrders, // NEW
+          roas,
+          calculatedRating // NEW
         };
       });
 
@@ -517,22 +554,20 @@ router.patch("/api/influencers/:id", async (req: Request, res: Response) => {
   });
 
   // ==============================================================================
-  // 4. TRACKING & WEBHOOKS
+  // 5. TRACKING & WEBHOOKS (Le Coeur du Revenue 2)
   // ==============================================================================
 
   router.post("/api/tracking/event", async (req: Request, res: Response) => {
     try {
       const eventData = req.body;
-      console.log("📥 Event Received:", eventData.eventType, "UTM:", eventData.slugUtm || "none");
-
-await db.insert(events).values({
-  eventType: eventData.eventType,
-  sessionId: eventData.sessionId,
-  utmCampaign: eventData.slugUtm || "unknown",
-  revenue: eventData.revenue ? parseFloat(eventData.revenue) : 0,
-  payload: eventData,
-  createdAt: new Date()
-});
+      await db.insert(events).values({
+        eventType: eventData.eventType,
+        sessionId: eventData.sessionId,
+        utmCampaign: eventData.slugUtm || "unknown",
+        revenue: eventData.revenue ? parseFloat(eventData.revenue) : 0,
+        payload: eventData,
+        createdAt: new Date()
+      });
       res.json({ success: true });
     } catch (error) {
       console.error("Tracking Error:", error);
@@ -540,279 +575,166 @@ await db.insert(events).values({
     }
   });
 
+  // WEBHOOK ORDERS : Capture les commandes pour Revenue (2)
   router.post("/api/webhooks/orders/create", async (req: Request, res: Response) => {
-    console.log("💰 ORDER WEBHOOK RECEIVED");
-    res.status(200).send();
+    try {
+      const order = req.body; // Payload brut Shopify
+      console.log(`💰 [Webhook] Order received: ${order.id} - Codes:`, order.discount_codes);
+
+      const discountCodes = order.discount_codes || [];
+      const primaryCode = discountCodes.length > 0 ? discountCodes[0].code : null;
+
+      await db.insert(orders).values({
+        shopifyOrderId: order.id.toString(),
+        totalPrice: parseFloat(order.total_price),
+        currency: order.currency,
+        promoCode: primaryCode, // On stocke le code promo utilisé
+        createdAt: new Date()
+      }).onConflictDoUpdate({
+        target: orders.shopifyOrderId,
+        set: {
+          totalPrice: parseFloat(order.total_price),
+          promoCode: primaryCode
+        }
+      });
+
+      res.status(200).send();
+    } catch (e) {
+      console.error("❌ [Webhook] Order Error:", e);
+      res.status(500).send("Error processing webhook");
+    }
   });
 
   // ==============================================================================
-  // 5. FORCE PIXEL
+  // 6. UTILITAIRES SHOPIFY & DEBUG
   // ==============================================================================
-  router.get("/api/force-pixel", async (req: Request, res: Response) => {
+  
+  router.get("/api/shopify/discount-codes", async (req: Request, res: Response) => {
     const shop = req.query.shop as string;
-
-    if (!shop) return res.json({ error: "Missing shop parameter" });
-
+    if (!shop) return res.json({ error: "Missing shop parameter", codes: [] });
     const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
-
-    if (!shopData || !shopData.accessToken) {
-      return res.json({ error: "Shop non trouvé en BDD ou pas de token. Réinstalle l'app." });
-    }
+    if (!shopData || !shopData.accessToken) return res.json({ error: "Shop not found", codes: [] });
 
     try {
       const client = new shopify.clients.Graphql({
-        session: {
-          shop: shopData.shopDomain,
-          accessToken: shopData.accessToken,
-        } as any
+        session: { shop: shopData.shopDomain, accessToken: shopData.accessToken } as any
       });
-
-      const accountID = shopData.shopDomain.replace('.myshopify.com', '');
-      const settingsJson = JSON.stringify({ accountID: accountID });
-
       const response = await client.request(`
-        mutation {
-          webPixelCreate(webPixel: { settings: ${JSON.stringify(settingsJson)} }) {
-            userErrors {
-              code
-              field
-              message
-            }
-            webPixel {
-              id
-              settings
+        query {
+          codeDiscountNodes(first: 50) {
+            nodes {
+              codeDiscount {
+                ... on DiscountCodeBasic { title codes(first:5) { nodes { code } } status }
+                ... on DiscountCodeBxgy { title codes(first:5) { nodes { code } } status }
+                ... on DiscountCodeFreeShipping { title codes(first:5) { nodes { code } } status }
+              }
             }
           }
         }
       `);
-
-      console.log("✅ Force Pixel Response:", response);
-      res.json(response);
+      const nodes = (response as any).data?.codeDiscountNodes?.nodes || [];
+      const codes: any[] = [];
+      nodes.forEach((n: any) => {
+        const d = n.codeDiscount;
+        if(d?.codes?.nodes) {
+          d.codes.nodes.forEach((c: any) => codes.push({ code: c.code, status: d.status }));
+        }
+      });
+      res.json({ codes });
     } catch (e: any) {
-      console.error("❌ Force Pixel Error:", e);
-      res.json({ error: "CRASH", details: e.message, stack: e.stack });
+      console.error("❌ Discount Codes Error:", e);
+      res.json({ error: e.message, codes: [] });
     }
   });
 
-  // ==============================================================================
-  // 6. DEBUG & HEALTH CHECK
-  // ==============================================================================
-  router.get("/api/webhooks/test", (req: Request, res: Response) => {
-    res.json({
-      status: "OK",
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV || "development"
-    });
-  });
-
-  router.get("/api/debug/shop", async (req: Request, res: Response) => {
-    const shop = req.query.shop as string;
-    if (!shop) return res.json({ error: "Missing shop parameter" });
-
-    const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
-
-    if (!shopData) return res.json({ error: "Shop not found", shop });
-
-    res.json({
-      shop: shopData.shopDomain,
-      hasToken: !!shopData.accessToken,
-      tokenPreview: shopData.accessToken ? `${shopData.accessToken.substring(0, 10)}...` : null,
-      scope: shopData.scope,
-      isInstalled: shopData.isInstalled,
-      installedAt: shopData.installedAt
-    });
-  });
-
-
-
-
-// ==============================================================================
-// 7. SHOPIFY DISCOUNT CODES
-// ==============================================================================
-  router.get("/api/shopify/discount-codes", async (req: Request, res: Response) => {
-  const shop = req.query.shop as string;
-
-  if (!shop) {
-    return res.json({ error: "Missing shop parameter", codes: [] });
-  }
-
-  const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
-
-  if (!shopData || !shopData.accessToken) {
-    return res.json({ error: "Shop not found", codes: [] });
-  }
-
-  try {
-    const client = new shopify.clients.Graphql({
-      session: {
-        shop: shopData.shopDomain,
-        accessToken: shopData.accessToken,
-      } as any
-    });
-
-    const response = await client.request(`
-      query {
-        codeDiscountNodes(first: 50) {
-          nodes {
-            id
-            codeDiscount {
-              ... on DiscountCodeBasic {
-                title
-                codes(first: 10) {
-                  nodes {
-                    code
-                  }
-                }
-                status
-              }
-              ... on DiscountCodeBxgy {
-                title
-                codes(first: 10) {
-                  nodes {
-                    code
-                  }
-                }
-                status
-              }
-              ... on DiscountCodeFreeShipping {
-                title
-                codes(first: 10) {
-                  nodes {
-                    code
-                  }
-                }
-                status
-              }
-            }
-          }
-        }
-      }
-    `);
-
-    const discountNodes = (response as any).data?.codeDiscountNodes?.nodes || [];
-    const codes: { code: string; title: string; status: string }[] = [];
-
-    for (const node of discountNodes) {
-      const discount = node.codeDiscount;
-      if (discount && discount.codes?.nodes) {
-        for (const codeNode of discount.codes.nodes) {
-          codes.push({
-            code: codeNode.code,
-            title: discount.title || codeNode.code,
-            status: discount.status || "ACTIVE"
-          });
-        }
-      }
-    }
-
-    res.json({ codes });
-  } catch (e: any) {
-    console.error("❌ Discount Codes Error:", e);
-    res.json({ error: e.message, codes: [] });
-  }
-});
-
-
-
-// ==============================================================================
-  // 8. SHOPIFY PRODUCTS
-  // ==============================================================================
   router.get("/api/shopify/products", async (req: Request, res: Response) => {
     const shop = req.query.shop as string;
-    
-    if (!shop) {
-      return res.json({ error: "Missing shop parameter", products: [] });
-    }
-
+    if (!shop) return res.json({ error: "Missing shop parameter", products: [] });
     const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
-    
-    if (!shopData || !shopData.accessToken) {
-      return res.json({ error: "Shop not found", products: [] });
-    }
+    if (!shopData || !shopData.accessToken) return res.json({ error: "Shop not found", products: [] });
 
     try {
       const client = new shopify.clients.Graphql({
-        session: {
-          shop: shopData.shopDomain,
-          accessToken: shopData.accessToken,
-        } as any
+        session: { shop: shopData.shopDomain, accessToken: shopData.accessToken } as any
       });
-
       const response = await client.request(`
         query {
           products(first: 50) {
-            nodes {
-              id
-              title
-              handle
-              featuredImage {
-                url
-              }
-              onlineStoreUrl
-            }
+            nodes { id title handle featuredImage { url } onlineStoreUrl }
           }
         }
       `);
-
-      const productNodes = (response as any).data?.products?.nodes || [];
-      const products = productNodes.map((p: any) => ({
+      const products = (response as any).data?.products?.nodes?.map((p: any) => ({
         id: p.id,
         title: p.title,
         handle: p.handle,
         imageUrl: p.featuredImage?.url || null,
-        url: p.onlineStoreUrl || `https://${shop}/products/${p.handle}`
-      }));
-
+        url: p.onlineStoreUrl
+      })) || [];
       res.json({ products });
     } catch (e: any) {
-      console.error("❌ Products Error:", e);
       res.json({ error: e.message, products: [] });
     }
   });
 
-// ==============================================================================
-  // 9. IMAGE UPLOAD (Local Storage)
-  // ==============================================================================
-  const uploadDir = path.join(process.cwd(), "uploads/influencers/images-profils");
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  }
+  // Force Pixel Endpoint
+  router.get("/api/force-pixel", async (req: Request, res: Response) => {
+    const shop = req.query.shop as string;
+    if (!shop) return res.json({ error: "Missing shop parameter" });
+    const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
+    if (!shopData || !shopData.accessToken) return res.json({ error: "Shop non trouvé." });
 
-  const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-      cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-      const uniqueName = `${Date.now()}-${Math.random().toString(36).substring(7)}${path.extname(file.originalname)}`;
-      cb(null, uniqueName);
-    },
+    try {
+      const client = new shopify.clients.Graphql({
+        session: { shop: shopData.shopDomain, accessToken: shopData.accessToken } as any
+      });
+      const accountID = shopData.shopDomain.replace('.myshopify.com', '');
+      const settingsJson = JSON.stringify({ accountID: accountID });
+      const response = await client.request(`
+        mutation {
+          webPixelCreate(webPixel: { settings: ${JSON.stringify(settingsJson)} }) {
+            userErrors { code field message }
+            webPixel { id }
+          }
+        }
+      `);
+      res.json(response);
+    } catch (e: any) {
+      res.json({ error: "CRASH", details: e.message });
+    }
   });
 
+  // Debug Endpoints
+  router.get("/api/webhooks/test", (req, res) => res.json({ status: "OK", time: new Date() }));
+  router.get("/api/debug/shop", async (req, res) => {
+    const shop = req.query.shop as string;
+    const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
+    res.json(shopData || { error: "Not found" });
+  });
+
+  // Image Upload
+  const uploadDir = path.join(process.cwd(), "uploads/influencers/images-profils");
+  if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+  const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => cb(null, `${Date.now()}-${Math.random().toString(36).substring(7)}${path.extname(file.originalname)}`),
+  });
   const upload = multer({
     storage,
-    limits: { fileSize: 2 * 1024 * 1024 }, // 2 Mo max
+    limits: { fileSize: 2 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
       const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-      if (allowedTypes.includes(file.mimetype)) {
-        cb(null, true);
-      } else {
-        cb(new Error("Only images are allowed"));
-      }
+      if (allowedTypes.includes(file.mimetype)) cb(null, true);
+      else cb(new Error("Only images are allowed"));
     },
   });
 
-  router.post("/api/upload-image", upload.single("image"), (req: Request, res: Response) => {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
-    const imageUrl = `https://api.influtrak.com/uploads/influencers/images-profils/${req.file.filename}`;
-    res.json({ success: true, url: imageUrl });
+  router.post("/api/upload-image", upload.single("image"), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    res.json({ success: true, url: `https://api.influtrak.com/uploads/influencers/images-profils/${req.file.filename}` });
   });
 
-  // Serve uploaded images
   app.use("/uploads", require("express").static(path.join(process.cwd(), "uploads")));
-
-
 
   app.use(router);
 }
