@@ -41,7 +41,6 @@ import type { CampaignWithInfluencer, Influencer } from "@shared/schema";
 
 // --- TYPES & SCHEMA ---
 
-// Stats étendues pour l'affichage riche des cards (Match le backend split)
 interface CampaignStats extends CampaignWithInfluencer {
   // Data Onglet 1 (UTM)
   clicks: number;
@@ -59,7 +58,7 @@ interface CampaignStats extends CampaignWithInfluencer {
   productImage?: string | null;
   productTitle?: string | null;
   currency?: string;
-  promoCodeUsage?: number; // Usage total (souvent lié au promo)
+  promoCodeUsage?: number;
 }
 
 const campaignFormSchema = z.object({
@@ -133,23 +132,26 @@ function CampaignCard({
   // 1. Revenue
   const revenue = isUtm ? campaign.revenueUtm : campaign.revenuePromo;
   
-  // 2. Orders
+  // 2. Orders (Pour l'affichage principal)
   const orders = isUtm ? campaign.ordersUtm : campaign.ordersPromo;
   
-  // 3. Coûts (Fixe + Commission sur le revenu affiché)
+  // 3. Coûts
   const commissionCost = revenue * (campaign.commissionPercent / 100);
   const totalCost = campaign.fixedCost + commissionCost;
   
   // 4. ROAS
   const roas = totalCost > 0 ? revenue / totalCost : 0;
   
-  // 5. Conv Rate (Uniquement pertinent pour UTM car on a les clics)
+  // 5. Conv Rate
   const convRate = isUtm && campaign.clicks > 0 ? (orders / campaign.clicks) * 100 : 0;
 
-  // Construction dynamique du lien sponsorisé
+  // 6. PROMO CODE USAGE COUNT (Le Correctif)
+  // Si on est en mode UTM, on affiche le nombre de commandes UTM (historique inclus)
+  // Si on est en mode Promo, on affiche le nombre de commandes Webhook
+  const promoCountDisplay = isUtm ? campaign.ordersUtm : campaign.ordersPromo;
+
   const getSponsoredLink = () => {
     if (campaign.targetType === "homepage") {
-      const baseUrl = campaign.productUrl ? new URL(campaign.productUrl).origin : `https://${campaign.shopId || "myshopify.com"}`; 
       return `?utm_campaign=${campaign.slugUtm}`;
     }
     if (campaign.productUrl && campaign.slugUtm) {
@@ -170,7 +172,6 @@ function CampaignCard({
     }
   };
 
-  // Rendu de la cible (Target)
   const renderTarget = () => {
     if (campaign.targetType === "homepage") {
       return (
@@ -182,8 +183,6 @@ function CampaignCard({
         </div>
       );
     }
-    
-    // Produit
     return (
       <div className="flex items-center gap-2 text-sm font-medium overflow-hidden">
         {campaign.productImage ? (
@@ -221,34 +220,35 @@ function CampaignCard({
       
       <CardContent className="space-y-3 flex-1 text-sm">
         
-        {/* TARGET DISPLAY (NOUVEAU) */}
+        {/* TARGET */}
         <div className="bg-muted/30 p-2 rounded border border-border/50">
           {renderTarget()}
         </div>
 
-        {/* Promo Code */}
+        {/* PROMO CODE + TOTAL */}
         {campaign.promoCode && (
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-muted-foreground">Promo Code:</span>
-            <div className="flex items-center gap-1 font-mono font-medium bg-green-50 text-green-700 px-1.5 py-0.5 rounded border border-green-100">
-              <Tag className="h-3 w-3" />
-              {campaign.promoCode}
-              {/* On affiche l'usage global ou celui de l'onglet actif ? Global est mieux pour info code */}
-              <span className="text-muted-foreground ml-1">({campaign.promoCodeUsage || 0})</span>
+          <div className="flex justify-between items-start text-xs mt-2">
+            <span className="text-muted-foreground mt-1">Promo Code:</span>
+            <div className="flex flex-col items-end">
+              <div className="flex items-center gap-1 font-mono font-medium bg-green-50 text-green-700 px-1.5 py-0.5 rounded border border-green-100">
+                <Tag className="h-3 w-3" />
+                {campaign.promoCode}
+              </div>
+              <span className="text-[10px] text-muted-foreground font-medium mt-0.5">
+                Total: {promoCountDisplay}
+              </span>
             </div>
           </div>
         )}
 
-        {/* STATS GRID - DYNAMIQUE SELON ONGLET */}
+        {/* STATS GRID */}
         <div className="grid grid-cols-2 gap-2 pt-2 border-t mt-2">
           
-          {/* Revenue */}
           <div className="flex flex-col">
             <span className="text-[10px] text-muted-foreground">Revenue</span>
             <span className="font-semibold text-green-600">{formatCurrency(revenue, campaign.currency)}</span>
           </div>
 
-          {/* ROAS */}
           <div className="flex flex-col">
             <span className="text-[10px] text-muted-foreground">ROAS</span>
             <span className={`font-semibold ${roas >= 2 ? "text-green-600" : roas > 0 ? "text-orange-600" : "text-muted-foreground"}`}>
@@ -256,19 +256,16 @@ function CampaignCard({
             </span>
           </div>
           
-          {/* Cost */}
           <div className="flex flex-col">
             <span className="text-[10px] text-muted-foreground">Total Cost</span>
             <span className="font-medium">{formatCurrency(totalCost, campaign.currency)}</span>
           </div>
 
-          {/* Orders */}
           <div className="flex flex-col">
             <span className="text-[10px] text-muted-foreground">Orders</span>
             <span className="font-medium">{orders}</span>
           </div>
 
-          {/* Conv Rate (Si UTM) */}
           {isUtm && (
             <div className="flex flex-col col-span-2 mt-1 pt-1 border-t border-dashed">
                <div className="flex justify-between items-center">
@@ -282,7 +279,6 @@ function CampaignCard({
       </CardContent>
 
       <CardFooter className="flex justify-end gap-2 pt-2 border-t bg-muted/10">
-        {/* Bouton Copy Link seulement si UTM activé ou toujours ? Toujours utile. */}
         {fullLink && (
           <Button
             variant="ghost"

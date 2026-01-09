@@ -23,7 +23,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Users, Megaphone, DollarSign, TrendingUp, MousePointer, ShoppingCart, 
-  Package, Tag, Copy, Check, CreditCard, Home 
+  Package, Tag, Copy, Check, Link, CreditCard, Home 
 } from "lucide-react";
 import type { CampaignWithStats } from "@shared/schema";
 
@@ -54,7 +54,7 @@ const formatNumber = (num: number): string => {
   return new Intl.NumberFormat("en-US").format(num);
 };
 
-// --- COMPOSANTS UTILITAIRES (MANQUANTS DANS LA VERSION PRÉCÉDENTE) ---
+// --- COMPOSANTS UTILITAIRES ---
 
 function StatCard({
   title,
@@ -341,6 +341,9 @@ export default function Dashboard() {
                   {campaigns.map((campaign) => {
                     const stats = getDynamicStats(campaign);
                     
+                    // CORRECTION : Détermination du total à afficher
+                    const promoCountDisplay = activeTab === "utm" ? campaign.ordersUtm : campaign.ordersPromo;
+
                     return (
                       <TableRow key={campaign.id}>
                         {/* Campaign */}
@@ -385,10 +388,15 @@ export default function Dashboard() {
                           {formatNumber(stats.orders)}
                         </TableCell>
 
-                        {/* Promo Code */}
+                        {/* Promo Code (AVEC TOTAL CORRIGÉ) */}
                         <TableCell className="text-right">
                           {campaign.promoCode ? (
-                            <span className="text-xs bg-muted px-1 rounded">{campaign.promoCode}</span>
+                            <div className="flex flex-col items-end">
+                              <span className="text-xs bg-muted px-1 rounded">{campaign.promoCode}</span>
+                              <span className="text-[10px] text-muted-foreground font-medium mt-0.5">
+                                Total: {promoCountDisplay}
+                              </span>
+                            </div>
                           ) : <span className="text-muted-foreground">-</span>}
                         </TableCell>
 
