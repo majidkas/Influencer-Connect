@@ -34,8 +34,8 @@ import { InfluencerAvatar } from "@/components/influencer-avatar";
 import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
 import { 
-  Plus, Pencil, Trash2, Megaphone, Tag, DollarSign, 
-  Percent, Copy, Check, Loader2, Filter, ShoppingBag, Home 
+  Plus, Pencil, Trash2, Megaphone, Tag, Percent, Copy, Check, 
+  Loader2, Filter, ShoppingBag, Home 
 } from "lucide-react";
 import type { CampaignWithInfluencer, Influencer } from "@shared/schema";
 
@@ -91,6 +91,17 @@ const formatCurrency = (amount: number, currency = "EUR"): string => {
   return new Intl.NumberFormat("fr-FR", { style: "currency", currency }).format(amount);
 };
 
+// Helper pour extraire le symbole (ex: €)
+const getCurrencySymbol = (currency = "EUR") => {
+  try {
+    return new Intl.NumberFormat("fr-FR", { style: "currency", currency })
+      .formatToParts(0)
+      .find(part => part.type === "currency")?.value || currency;
+  } catch (e) {
+    return currency;
+  }
+};
+
 // --- COMPONENTS ---
 
 function CampaignCardSkeleton() {
@@ -132,7 +143,7 @@ function CampaignCard({
   // 1. Revenue
   const revenue = isUtm ? campaign.revenueUtm : campaign.revenuePromo;
   
-  // 2. Orders (Pour l'affichage principal)
+  // 2. Orders
   const orders = isUtm ? campaign.ordersUtm : campaign.ordersPromo;
   
   // 3. Coûts
@@ -145,9 +156,6 @@ function CampaignCard({
   // 5. Conv Rate
   const convRate = isUtm && campaign.clicks > 0 ? (orders / campaign.clicks) * 100 : 0;
 
-  // 6. PROMO CODE USAGE COUNT (Le Correctif)
-  // Si on est en mode UTM, on affiche le nombre de commandes UTM (historique inclus)
-  // Si on est en mode Promo, on affiche le nombre de commandes Webhook
   const promoCountDisplay = isUtm ? campaign.ordersUtm : campaign.ordersPromo;
 
   const getSponsoredLink = () => {
@@ -225,7 +233,7 @@ function CampaignCard({
           {renderTarget()}
         </div>
 
-        {/* PROMO CODE + TOTAL */}
+        {/* PROMO CODE */}
         {campaign.promoCode && (
           <div className="flex justify-between items-start text-xs mt-2">
             <span className="text-muted-foreground mt-1">Promo Code:</span>
@@ -264,6 +272,17 @@ function CampaignCard({
           <div className="flex flex-col">
             <span className="text-[10px] text-muted-foreground">Orders</span>
             <span className="font-medium">{orders}</span>
+          </div>
+
+          {/* AJOUT: DÉTAILS COÛTS */}
+          <div className="flex flex-col mt-1">
+            <span className="text-[10px] text-muted-foreground">Fixed Cost</span>
+            <span className="text-xs">{formatCurrency(campaign.fixedCost, campaign.currency)}</span>
+          </div>
+
+          <div className="flex flex-col mt-1">
+            <span className="text-[10px] text-muted-foreground">Commission</span>
+            <span className="text-xs">{campaign.commissionPercent}%</span>
           </div>
 
           {isUtm && (
@@ -392,10 +411,12 @@ function CampaignFormDialog({
   campaign,
   open,
   onOpenChange,
+  currencySymbol = "€" // Par défaut si non détecté
 }: {
   campaign?: CampaignWithInfluencer;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  currencySymbol?: string;
 }) {
   const { toast } = useToast();
 
@@ -449,7 +470,6 @@ function CampaignFormDialog({
     }
   }, [open, campaign, form]);
 
-  // Auto-slug
   const campaignName = form.watch("name");
   const currentSlug = form.watch("slugUtm");
   useEffect(() => {
@@ -527,7 +547,6 @@ function CampaignFormDialog({
               )}
             />
 
-            {/* Campaign Name + Slug */}
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
@@ -553,7 +572,6 @@ function CampaignFormDialog({
               />
             </div>
 
-            {/* TARGET TYPE SELECTION */}
             <FormField
               control={form.control}
               name="targetType"
@@ -578,7 +596,6 @@ function CampaignFormDialog({
               )}
             />
 
-            {/* PRODUCT SELECT (Only if targetType == product) */}
             {targetType === "product" && (
               <FormField
                 control={form.control}
@@ -613,7 +630,6 @@ function CampaignFormDialog({
               />
             )}
 
-            {/* Promo Code */}
             <FormField
               control={form.control}
               name="promoCode"
@@ -637,7 +653,6 @@ function CampaignFormDialog({
               )}
             />
 
-            {/* LINK PREVIEW */}
             <SponsoredLinkCopier 
               productUrl={form.watch("productUrl") || ""} 
               slugUtm={form.watch("slugUtm")}
@@ -645,7 +660,6 @@ function CampaignFormDialog({
               shopDomain={shopDomain}
             />
 
-            {/* COSTS */}
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={form.control}
@@ -654,7 +668,10 @@ function CampaignFormDialog({
                   <FormItem>
                     <FormLabel>Fixed Cost</FormLabel>
                     <div className="relative">
-                      <DollarSign className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                      {/* REMPLACEMENT DE L'ICÔNE $ PAR LA DEVISE DYNAMIQUE */}
+                      <div className="absolute left-3 top-2.5 text-sm text-muted-foreground font-medium">
+                        {currencySymbol}
+                      </div>
                       <Input type="number" className="pl-8" {...field} onChange={e => field.onChange(parseFloat(e.target.value))} />
                     </div>
                   </FormItem>
@@ -694,7 +711,6 @@ export default function Campaigns() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<CampaignStats | undefined>();
   const [sortBy, setSortBy] = useState<string>("recent");
-  // ETAT GLOBAL DE L'ONGLET
   const [activeTab, setActiveTab] = useState<"utm" | "promo">("utm");
   
   const { toast } = useToast();
@@ -706,6 +722,11 @@ export default function Campaigns() {
       return res.json();
     },
   });
+
+  // Détection de la devise (basée sur la 1ère campagne trouvée ou EUR par défaut)
+  const detectedCurrencySymbol = campaigns && campaigns.length > 0 
+    ? getCurrencySymbol(campaigns[0].currency) 
+    : "€";
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiRequest("DELETE", `/api/campaigns/${id}`),
@@ -722,7 +743,6 @@ export default function Campaigns() {
   return (
     <div className="p-6 space-y-6">
       
-      {/* HEADER */}
       <div className="flex flex-col gap-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -731,7 +751,6 @@ export default function Campaigns() {
           </div>
           
           <div className="flex items-center gap-2">
-            {/* TABS SWITCHER (En haut à droite) */}
             <div className="flex p-1 bg-muted rounded-lg border mr-4">
               <button
                 onClick={() => setActiveTab("utm")}
@@ -775,7 +794,6 @@ export default function Campaigns() {
         </div>
       </div>
 
-      {/* CONTENT */}
       {isLoading ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => <CampaignCardSkeleton key={i} />)}
@@ -792,7 +810,7 @@ export default function Campaigns() {
             <CampaignCard
               key={campaign.id}
               campaign={campaign}
-              activeTab={activeTab} // On passe l'onglet actif à la carte
+              activeTab={activeTab} 
               onEdit={() => { setEditingCampaign(campaign); setDialogOpen(true); }}
               onDelete={() => handleDelete(campaign.id)}
             />
@@ -804,6 +822,7 @@ export default function Campaigns() {
         campaign={editingCampaign}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
+        currencySymbol={detectedCurrencySymbol}
       />
     </div>
   );
