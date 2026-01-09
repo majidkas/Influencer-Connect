@@ -34,23 +34,32 @@ import { InfluencerAvatar } from "@/components/influencer-avatar";
 import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
 import { 
-  Plus, Pencil, Trash2, Megaphone, Link as LinkIcon, Tag, DollarSign, 
-  Percent, Copy, Check, Loader2, Filter, ShoppingBag 
+  Plus, Pencil, Trash2, Megaphone, Tag, DollarSign, 
+  Percent, Copy, Check, Loader2, Filter, ShoppingBag, Home 
 } from "lucide-react";
 import type { CampaignWithInfluencer, Influencer } from "@shared/schema";
 
 // --- TYPES & SCHEMA ---
 
-// Stats étendues pour l'affichage riche des cards
+// Stats étendues pour l'affichage riche des cards (Match le backend split)
 interface CampaignStats extends CampaignWithInfluencer {
-  clicks?: number;
-  orders?: number; // Total Orders
-  revenue?: number; // Revenue 1
-  revenuePromoOnly?: number; // Revenue 2
-  conversionRate?: number;
-  roas?: number;
-  totalCost?: number;
-  promoCodeUsage?: number;
+  // Data Onglet 1 (UTM)
+  clicks: number;
+  ordersUtm: number;
+  revenueUtm: number;
+  addToCarts: number;
+  
+  // Data Onglet 2 (Promo)
+  ordersPromo: number;
+  revenuePromo: number;
+
+  // Common
+  fixedCost: number;
+  commissionPercent: number;
+  productImage?: string | null;
+  productTitle?: string | null;
+  currency?: string;
+  promoCodeUsage?: number; // Usage total (souvent lié au promo)
 }
 
 const campaignFormSchema = z.object({
@@ -58,7 +67,7 @@ const campaignFormSchema = z.object({
   name: z.string().min(1, "Campaign name is required"),
   slugUtm: z.string().min(1, "UTM slug is required"),
   promoCode: z.string().optional().or(z.literal("")),
-  targetType: z.enum(["homepage", "product"]).default("product"), // NOUVEAU
+  targetType: z.enum(["homepage", "product"]).default("product"),
   productUrl: z.string().optional().or(z.literal("")),
   costFixed: z.number().min(0).default(0),
   commissionPercent: z.number().min(0).max(100).default(0),
@@ -106,29 +115,43 @@ function CampaignCardSkeleton() {
 
 function CampaignCard({
   campaign,
+  activeTab,
   onEdit,
   onDelete,
 }: {
   campaign: CampaignStats;
+  activeTab: "utm" | "promo";
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
 
+  // --- CALCULS DYNAMIQUES ---
+  const isUtm = activeTab === "utm";
+  
+  // 1. Revenue
+  const revenue = isUtm ? campaign.revenueUtm : campaign.revenuePromo;
+  
+  // 2. Orders
+  const orders = isUtm ? campaign.ordersUtm : campaign.ordersPromo;
+  
+  // 3. Coûts (Fixe + Commission sur le revenu affiché)
+  const commissionCost = revenue * (campaign.commissionPercent / 100);
+  const totalCost = campaign.fixedCost + commissionCost;
+  
+  // 4. ROAS
+  const roas = totalCost > 0 ? revenue / totalCost : 0;
+  
+  // 5. Conv Rate (Uniquement pertinent pour UTM car on a les clics)
+  const convRate = isUtm && campaign.clicks > 0 ? (orders / campaign.clicks) * 100 : 0;
+
   // Construction dynamique du lien sponsorisé
   const getSponsoredLink = () => {
-    // Si Homepage
     if (campaign.targetType === "homepage") {
-      // On suppose que l'URL de base est connue ou on la construit simplement
-      // Ici on utilise une URL générique si productUrl est vide, sinon on prend la racine
       const baseUrl = campaign.productUrl ? new URL(campaign.productUrl).origin : `https://${campaign.shopId || "myshopify.com"}`; 
-      // Note: shopId est numérique dans le schema, donc on fait au mieux. 
-      // L'idéal est d'avoir le shopDomain stocké.
-      // Pour l'affichage, on va utiliser une astuce : si productUrl est vide, on prend juste le slug.
-      return `?utm_campaign=${campaign.slugUtm}`; // Lien relatif pour l'affichage simple
+      return `?utm_campaign=${campaign.slugUtm}`;
     }
-    // Si Produit
     if (campaign.productUrl && campaign.slugUtm) {
       const separator = campaign.productUrl.includes("?") ? "&" : "?";
       return `${campaign.productUrl}${separator}utm_campaign=${campaign.slugUtm}`;
@@ -145,6 +168,36 @@ function CampaignCard({
       toast({ title: "Lien sponsorisé copié" });
       setTimeout(() => setCopied(false), 2000);
     }
+  };
+
+  // Rendu de la cible (Target)
+  const renderTarget = () => {
+    if (campaign.targetType === "homepage") {
+      return (
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <div className="h-8 w-8 bg-primary/10 rounded flex items-center justify-center text-primary">
+            <Home className="h-4 w-4" />
+          </div>
+          <span>Homepage</span>
+        </div>
+      );
+    }
+    
+    // Produit
+    return (
+      <div className="flex items-center gap-2 text-sm font-medium overflow-hidden">
+        {campaign.productImage ? (
+          <img src={campaign.productImage} alt="Product" className="h-8 w-8 rounded object-cover flex-shrink-0" />
+        ) : (
+          <div className="h-8 w-8 bg-muted rounded flex items-center justify-center flex-shrink-0">
+            <ShoppingBag className="h-4 w-4 text-muted-foreground" />
+          </div>
+        )}
+        <span className="truncate" title={campaign.productTitle || "Product"}>
+          {campaign.productTitle || "Product"}
+        </span>
+      </div>
+    );
   };
 
   return (
@@ -167,15 +220,10 @@ function CampaignCard({
       </CardHeader>
       
       <CardContent className="space-y-3 flex-1 text-sm">
-        {/* Target Info */}
-        <div className="flex items-center gap-2 text-xs bg-muted/50 p-2 rounded">
-          {campaign.targetType === 'homepage' ? (
-            <span className="font-semibold text-primary">🏠 Homepage</span>
-          ) : (
-             <span className="truncate" title={campaign.productUrl || ""}>🛍️ Product</span>
-          )}
-          <span className="text-muted-foreground mx-1">|</span>
-          <code className="text-xs truncate flex-1">{campaign.slugUtm}</code>
+        
+        {/* TARGET DISPLAY (NOUVEAU) */}
+        <div className="bg-muted/30 p-2 rounded border border-border/50">
+          {renderTarget()}
         </div>
 
         {/* Promo Code */}
@@ -185,54 +233,56 @@ function CampaignCard({
             <div className="flex items-center gap-1 font-mono font-medium bg-green-50 text-green-700 px-1.5 py-0.5 rounded border border-green-100">
               <Tag className="h-3 w-3" />
               {campaign.promoCode}
+              {/* On affiche l'usage global ou celui de l'onglet actif ? Global est mieux pour info code */}
               <span className="text-muted-foreground ml-1">({campaign.promoCodeUsage || 0})</span>
             </div>
           </div>
         )}
 
-        {/* STATS GRID - ENRICHIE */}
-        <div className="grid grid-cols-2 gap-2 pt-2 border-t">
+        {/* STATS GRID - DYNAMIQUE SELON ONGLET */}
+        <div className="grid grid-cols-2 gap-2 pt-2 border-t mt-2">
           
-          {/* Revenue 1 */}
+          {/* Revenue */}
           <div className="flex flex-col">
-            <span className="text-[10px] text-muted-foreground">Rev (1) Link+Code</span>
-            <span className="font-semibold text-green-600">{formatCurrency(campaign.revenue || 0)}</span>
+            <span className="text-[10px] text-muted-foreground">Revenue</span>
+            <span className="font-semibold text-green-600">{formatCurrency(revenue, campaign.currency)}</span>
           </div>
 
-          {/* Revenue 2 */}
-          <div className="flex flex-col">
-             <span className="text-[10px] text-muted-foreground">Rev (2) Code Only</span>
-             <span className="font-semibold text-blue-600">{formatCurrency(campaign.revenuePromoOnly || 0)}</span>
-          </div>
-
-          {/* ROAS & Cost */}
+          {/* ROAS */}
           <div className="flex flex-col">
             <span className="text-[10px] text-muted-foreground">ROAS</span>
-            <span className={`font-semibold ${campaign.roas && campaign.roas >= 2 ? "text-green-600" : "text-orange-600"}`}>
-              {campaign.roas?.toFixed(2) || "0.00"}
+            <span className={`font-semibold ${roas >= 2 ? "text-green-600" : roas > 0 ? "text-orange-600" : "text-muted-foreground"}`}>
+              {roas.toFixed(2)}
             </span>
           </div>
           
+          {/* Cost */}
           <div className="flex flex-col">
             <span className="text-[10px] text-muted-foreground">Total Cost</span>
-            <span className="font-medium">{formatCurrency(campaign.totalCost || 0)}</span>
+            <span className="font-medium">{formatCurrency(totalCost, campaign.currency)}</span>
           </div>
 
-          {/* Conv Rate & Orders */}
-          <div className="flex flex-col">
-            <span className="text-[10px] text-muted-foreground">Conv. Rate</span>
-            <span className="font-medium">{campaign.conversionRate?.toFixed(1) || "0.0"}%</span>
-          </div>
-
+          {/* Orders */}
           <div className="flex flex-col">
             <span className="text-[10px] text-muted-foreground">Orders</span>
-            <span className="font-medium">{campaign.orders || 0}</span>
+            <span className="font-medium">{orders}</span>
           </div>
+
+          {/* Conv Rate (Si UTM) */}
+          {isUtm && (
+            <div className="flex flex-col col-span-2 mt-1 pt-1 border-t border-dashed">
+               <div className="flex justify-between items-center">
+                 <span className="text-[10px] text-muted-foreground">Conv. Rate ({campaign.clicks} clicks)</span>
+                 <span className="font-medium text-xs">{convRate.toFixed(1)}%</span>
+               </div>
+            </div>
+          )}
 
         </div>
       </CardContent>
 
       <CardFooter className="flex justify-end gap-2 pt-2 border-t bg-muted/10">
+        {/* Bouton Copy Link seulement si UTM activé ou toujours ? Toujours utile. */}
         {fullLink && (
           <Button
             variant="ghost"
@@ -306,11 +356,9 @@ function SponsoredLinkCopier({
   const [copied, setCopied] = useState(false);
 
   const getSponsoredLink = () => {
-    // Si Homepage : https://{shop-domain}?utm_campaign={slug}
     if (targetType === "homepage") {
       return `https://${shopDomain}?utm_campaign=${slugUtm}`;
     }
-    // Si Product : productUrl?utm...
     if (productUrl && slugUtm) {
       const separator = productUrl.includes("?") ? "&" : "?";
       return `${productUrl}${separator}utm_campaign=${slugUtm}`;
@@ -356,8 +404,6 @@ function CampaignFormDialog({
   const { toast } = useToast();
 
   const { data: influencers } = useQuery<Influencer[]>({ queryKey: ["/api/influencers"] });
-  
-  // Hardcoded shop domain fallback, ideally fetched from context or API
   const shopDomain = "clikn01.myshopify.com"; 
 
   const { data: discountCodes, isLoading: codesLoading } = useQuery<{ codes: any[] }>({
@@ -413,7 +459,6 @@ function CampaignFormDialog({
   useEffect(() => {
     if (campaignName && !campaign) {
       const genSlug = generateSlug(campaignName);
-      // Only update if empty or matches previous auto-gen
       if (!currentSlug || currentSlug === generateSlug(campaignName.slice(0, -1))) {
         form.setValue("slugUtm", genSlug);
       }
@@ -525,14 +570,12 @@ function CampaignFormDialog({
                          <input type="radio" {...field} value="homepage" checked={field.value === "homepage"} className="accent-primary" />
                          <span className="font-medium">Homepage</span>
                        </div>
-                       <p className="text-xs text-muted-foreground pl-6 mt-1">Directs traffic to your main store URL.</p>
                     </label>
                     <label className={`flex-1 border rounded p-3 cursor-pointer hover:bg-muted ${field.value === "product" ? "border-primary bg-primary/5" : ""}`}>
                        <div className="flex items-center gap-2">
                          <input type="radio" {...field} value="product" checked={field.value === "product"} className="accent-primary" />
                          <span className="font-medium">Product</span>
                        </div>
-                       <p className="text-xs text-muted-foreground pl-6 mt-1">Directs traffic to a specific product page.</p>
                     </label>
                   </div>
                 </FormItem>
@@ -594,7 +637,6 @@ function CampaignFormDialog({
                       ))}
                     </SelectContent>
                   </Select>
-                  <FormDescription>Used to track Revenue (2) even without link clicks.</FormDescription>
                 </FormItem>
               )}
             />
@@ -656,9 +698,11 @@ export default function Campaigns() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<CampaignStats | undefined>();
   const [sortBy, setSortBy] = useState<string>("recent");
+  // ETAT GLOBAL DE L'ONGLET
+  const [activeTab, setActiveTab] = useState<"utm" | "promo">("utm");
+  
   const { toast } = useToast();
 
-  // Fetch avec paramètre de tri
   const { data: campaigns, isLoading } = useQuery<CampaignStats[]>({
     queryKey: ["/api/campaigns/stats", sortBy],
     queryFn: async () => {
@@ -683,40 +727,55 @@ export default function Campaigns() {
     <div className="p-6 space-y-6">
       
       {/* HEADER */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Campaigns</h1>
-          <p className="text-muted-foreground">Manage your influencer marketing campaigns</p>
-          {/* LEGEND REVENUE */}
-          <p className="text-xs text-muted-foreground mt-1">
-            <span className="font-medium">(1) Revenue from UTM links + Promo code</span> • 
-            <span className="font-medium ml-1">(2) Revenue from promo codes only</span>
-          </p>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          {/* SORT DROPDOWN */}
-          <Select value={sortBy} onValueChange={setSortBy}>
-            <SelectTrigger className="w-[160px]">
-              <Filter className="w-4 h-4 mr-2" />
-              <SelectValue placeholder="Sort by" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="recent">Most Recent</SelectItem>
-              <SelectItem value="oldest">Oldest</SelectItem>
-              <SelectItem value="revenue_high">Highest Revenue</SelectItem>
-              <SelectItem value="revenue_low">Lowest Revenue</SelectItem>
-              <SelectItem value="roas_high">Highest ROAS</SelectItem>
-              <SelectItem value="roas_low">Lowest ROAS</SelectItem>
-              <SelectItem value="cost_high">Highest Cost</SelectItem>
-              <SelectItem value="cost_low">Lowest Cost</SelectItem>
-            </SelectContent>
-          </Select>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold">Campaigns</h1>
+            <p className="text-muted-foreground">Manage your influencer marketing campaigns</p>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            {/* TABS SWITCHER (En haut à droite) */}
+            <div className="flex p-1 bg-muted rounded-lg border mr-4">
+              <button
+                onClick={() => setActiveTab("utm")}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                  activeTab === "utm" 
+                    ? "bg-background text-foreground shadow-sm" 
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                Lien UTM + Code
+              </button>
+              <button
+                onClick={() => setActiveTab("promo")}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                  activeTab === "promo" 
+                    ? "bg-background text-foreground shadow-sm" 
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                Code Promo Seul
+              </button>
+            </div>
 
-          <Button onClick={() => { setEditingCampaign(undefined); setDialogOpen(true); }}>
-            <Plus className="h-4 w-4 mr-2" />
-            Create Campaign
-          </Button>
+            <Select value={sortBy} onValueChange={setSortBy}>
+              <SelectTrigger className="w-[140px]">
+                <Filter className="w-4 h-4 mr-2" />
+                <SelectValue placeholder="Sort by" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="recent">Recent</SelectItem>
+                <SelectItem value="revenue_high">Revenue ⬇</SelectItem>
+                <SelectItem value="roas_high">ROAS ⬇</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Button onClick={() => { setEditingCampaign(undefined); setDialogOpen(true); }}>
+              <Plus className="h-4 w-4 mr-2" />
+              Create
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -737,6 +796,7 @@ export default function Campaigns() {
             <CampaignCard
               key={campaign.id}
               campaign={campaign}
+              activeTab={activeTab} // On passe l'onglet actif à la carte
               onEdit={() => { setEditingCampaign(campaign); setDialogOpen(true); }}
               onDelete={() => handleDelete(campaign.id)}
             />
