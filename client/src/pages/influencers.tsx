@@ -34,9 +34,10 @@ import { InfluencerAvatar } from "@/components/influencer-avatar";
 import { StarRating } from "@/components/star-rating";
 import { SocialBadge } from "@/components/social-badge";
 import { useToast } from "@/hooks/use-toast";
+// CORRECTION ICI : Ajout de "Upload" dans les imports
 import { 
   Plus, Pencil, Trash2, X, Megaphone, DollarSign, TrendingUp, 
-  MessageCircle, Mail, ShoppingBag 
+  MessageCircle, Mail, ShoppingBag, Upload 
 } from "lucide-react";
 import type { InfluencerWithSocials } from "@shared/schema";
 
@@ -60,7 +61,7 @@ const influencerFormSchema = z.object({
   profileImageUrl: z.string().optional().or(z.literal("")),
   gender: z.enum(["female", "male"]).optional(),
   internalNotes: z.string().optional().or(z.literal("")),
-  whatsapp: z.string().optional().or(z.literal("")), // Nouveau champ
+  whatsapp: z.string().optional().or(z.literal("")), 
 });
 
 type InfluencerFormData = z.infer<typeof influencerFormSchema>;
@@ -79,10 +80,10 @@ interface InfluencerWithStats extends InfluencerWithSocials {
   activeCampaigns: number;
   totalCost: number;
   totalRevenue: number;
-  totalOrders: number;    // NEW
+  totalOrders: number;    
   roas: number;
-  calculatedRating: number; // NEW (Auto Rating)
-  whatsapp?: string;      // NEW
+  calculatedRating: number; 
+  whatsapp?: string;      
 }
 
 // --- COMPONENTS ---
@@ -457,6 +458,7 @@ function InfluencerFormDialog({
                     />
                   ) : (
                     <div className="text-center p-2">
+                      {/* C'est ici que le composant Upload était utilisé sans être importé */}
                       <Upload className="h-6 w-6 mx-auto mb-1 text-muted-foreground" />
                       <span className="text-[10px] text-muted-foreground">Upload</span>
                     </div>
