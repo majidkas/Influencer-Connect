@@ -122,7 +122,7 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 2. API DASHBOARD & STATS (Calculs Avancés)
+  // 2. API DASHBOARD & STATS (Calculs Séparés UTM vs Promo)
   // ==============================================================================
 
   router.get("/api/campaigns/stats", async (req: Request, res: Response) => {
@@ -132,7 +132,7 @@ export async function registerRoutes(server: Server, app: Express) {
       const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
       const allInfluencers = await db.select().from(influencers);
       const allEvents = await db.select().from(events);
-      const allOrders = await db.select().from(orders); // Récupère les commandes (Revenue 2)
+      const allOrders = await db.select().from(orders); // Table Orders (Webhook)
 
       // Get shop data
       const [shopData] = await db.select().from(shops).limit(1);
@@ -157,53 +157,52 @@ export async function registerRoutes(server: Server, app: Express) {
 
       let stats = allCampaigns.map(campaign => {
         const influencer = allInfluencers.find(inf => inf.id === campaign.influencerId);
-        const campaignEvents = allEvents.filter(e => e.utmCampaign === campaign.slugUtm);
-
-        // --- REVENUE (1) : Tracking UTM ---
-        const clicks = campaignEvents.filter(e => e.eventType === 'page_view' || e.eventType === 'product_view').length;
-        const purchaseEvents = campaignEvents.filter(e => e.eventType === 'purchase');
         
-        const ordersCountUtm = purchaseEvents.length;
-        const revenueLink = purchaseEvents.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
+        // --- 1. DONNÉES UTM (Pixel - Table Events) ---
+        const campaignEvents = allEvents.filter(e => e.utmCampaign === campaign.slugUtm);
+        const clicks = campaignEvents.filter(e => e.eventType === 'page_view' || e.eventType === 'product_view').length;
+        const addToCarts = campaignEvents.filter(e => e.eventType === 'add_to_cart').length;
+        
+        // Commandes via UTM (Pixel)
+        const purchaseEvents = campaignEvents.filter(e => e.eventType === 'purchase');
+        const ordersUtm = purchaseEvents.length;
+        const revenueUtm = purchaseEvents.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
 
-        // --- REVENUE (2) : Promo Code Only (Orders DB) ---
-        // On cherche les commandes qui ont utilisé le code promo de la campagne
+        // --- 2. DONNÉES PROMO (Webhook - Table Orders) ---
         const campaignPromoCode = campaign.promoCode ? campaign.promoCode.toLowerCase().trim() : null;
         
-        const promoOrders = campaignPromoCode 
+        const promoOrdersList = campaignPromoCode 
           ? allOrders.filter(o => o.promoCode && o.promoCode.toLowerCase() === campaignPromoCode) 
           : [];
           
-        const revenuePromoOnly = promoOrders.reduce((acc, curr) => acc + (curr.totalPrice || 0), 0);
-        const promoCodeUsage = promoOrders.length;
+        const ordersPromo = promoOrdersList.length;
+        const revenuePromo = promoOrdersList.reduce((acc, curr) => acc + (curr.totalPrice || 0), 0);
         
-        // Total Orders pour l'affichage (Priorité au plus grand nombre si chevauchement, ou simplement UTM + PromoOnly)
-        // Ici on simplifie : Orders = nombre de commandes via Promo Code (Source 2) car c'est souvent plus fiable pour l'influenceur
-        // Si pas de code promo, on prend le tracking UTM.
-        const totalOrders = campaignPromoCode ? promoCodeUsage : ordersCountUtm;
-
-        // --- ROI & CONVERSION ---
-        const commissionCost = revenueLink * ((campaign.commissionPercent || 0) / 100);
-        const totalCost = (campaign.costFixed || 0) + commissionCost;
-        const roas = totalCost > 0 ? (revenueLink / totalCost) : 0;
-        
-        // Conversion Rate = (Orders / Clicks) * 100
-        const conversionRate = clicks > 0 ? (totalOrders / clicks) * 100 : 0;
+        // --- 3. COÛTS FIXES ---
+        const fixedCost = campaign.costFixed || 0;
+        const commissionPercent = campaign.commissionPercent || 0;
 
         return {
           ...campaign,
           influencer: influencer || null,
+          
+          // Métriques UTM (Onglet 1)
           clicks,
-          addToCarts: campaignEvents.filter(e => e.eventType === 'add_to_cart').length,
-          orders: totalOrders, 
-          promoCodeUsage,
-          revenue: revenueLink,       // Revenue (1)
-          revenuePromoOnly,           // Revenue (2)
-          totalCost,
-          roas,
-          conversionRate,
+          addToCarts,
+          ordersUtm,
+          revenueUtm,
+          
+          // Métriques Promo (Onglet 2)
+          ordersPromo,
+          revenuePromo,
+          
+          // Coûts
+          fixedCost,
+          commissionPercent,
+          
+          // Infos Produit
           productImage: (() => {
-            if (campaign.targetType === 'homepage') return null; // Pas d'image pour homepage
+            if (campaign.targetType === 'homepage') return null;
             if (!campaign.productUrl) return null;
             const handle = campaign.productUrl.split('/products/')[1]?.split('?')[0];
             const product = shopifyProducts.find((p: any) => p.handle === handle);
@@ -221,16 +220,16 @@ export async function registerRoutes(server: Server, app: Express) {
       });
 
       // --- TRI (SORTING) ---
+      // Par défaut, on trie par date de création.
+      // Si tu veux trier par revenu global, on additionne ou on prend le max.
       if (sort) {
         switch (sort) {
           case 'recent': stats.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime()); break;
           case 'oldest': stats.sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime()); break;
-          case 'revenue_high': stats.sort((a, b) => b.revenue - a.revenue); break;
-          case 'revenue_low': stats.sort((a, b) => a.revenue - b.revenue); break;
-          case 'roas_high': stats.sort((a, b) => b.roas - a.roas); break;
-          case 'roas_low': stats.sort((a, b) => a.roas - b.roas); break;
-          case 'cost_high': stats.sort((a, b) => b.totalCost - a.totalCost); break;
-          case 'cost_low': stats.sort((a, b) => a.totalCost - b.totalCost); break;
+          case 'revenue_high': stats.sort((a, b) => Math.max(b.revenueUtm, b.revenuePromo) - Math.max(a.revenueUtm, a.revenuePromo)); break;
+          case 'revenue_low': stats.sort((a, b) => Math.max(a.revenueUtm, a.revenuePromo) - Math.max(b.revenueUtm, b.revenuePromo)); break;
+          case 'cost_high': stats.sort((a, b) => (b.fixedCost) - (a.fixedCost)); break; // Tri simple sur coût fixe pour l'instant
+          case 'cost_low': stats.sort((a, b) => (a.fixedCost) - (b.fixedCost)); break;
         }
       }
 
@@ -241,24 +240,27 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
+  // API Stats Globales (Dashboard Cards du haut)
   router.get("/api/stats", async (req, res) => {
     try {
       const infCount = await db.select({ count: sql<number>`count(*)` }).from(influencers);
       const activeCampCount = await db.select({ count: sql<number>`count(*)` }).from(campaigns).where(eq(campaigns.status, 'active'));
-      const allPurchaseEvents = await db.select().from(events).where(eq(events.eventType, 'purchase'));
       
+      // On calcule le revenu global en prenant le MAX de chaque campagne (pour ne pas compter en double si possible, ou juste UTM)
+      // Pour faire simple ici, on va sommer les revenus UTM (Pixel) car c'est l'historique complet pour l'instant.
+      const allPurchaseEvents = await db.select().from(events).where(eq(events.eventType, 'purchase'));
       const totalRevenue = allPurchaseEvents.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
       
-      // Récupération globale pour le ROAS
+      // Calcul des coûts globaux
       const allCampaigns = await db.select().from(campaigns);
-      
       const totalCosts = allCampaigns.reduce((acc, camp) => {
-        const fixedCost = camp.costFixed || 0;
-        const campaignRevenue = allPurchaseEvents
+        const fixed = camp.costFixed || 0;
+        // Commission basée sur le pixel pour l'instant pour la cohérence globale
+        const campRevenue = allPurchaseEvents
           .filter(e => e.utmCampaign === camp.slugUtm)
           .reduce((sum, e) => sum + (e.revenue || 0), 0);
-        const commissionCost = campaignRevenue * ((camp.commissionPercent || 0) / 100);
-        return acc + fixedCost + commissionCost;
+        const comm = campRevenue * ((camp.commissionPercent || 0) / 100);
+        return acc + fixed + comm;
       }, 0);
 
       const averageRoas = totalCosts > 0 ? totalRevenue / totalCosts : 0;
@@ -276,7 +278,7 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 3. API CRUD CAMPAGNES (Avec TargetType)
+  // 3. API CRUD CAMPAGNES
   // ==============================================================================
 
   router.get("/api/campaigns", async (req: Request, res: Response) => {
@@ -297,7 +299,7 @@ export async function registerRoutes(server: Server, app: Express) {
     try {
       const { 
         name, slug, slugUtm, discountType, discountValue, influencerId, 
-        promoCode, productUrl, costFixed, commissionPercent, targetType // NEW
+        promoCode, productUrl, costFixed, commissionPercent, targetType
       } = req.body;
 
       let finalSlug = slug || slugUtm;
@@ -311,7 +313,7 @@ export async function registerRoutes(server: Server, app: Express) {
         name,
         slugUtm: finalSlug,
         promoCode: promoCode || null,
-        targetType: targetType || "product", // NEW
+        targetType: targetType || "product",
         productUrl: productUrl || null,
         discountType,
         discountValue: discountValue ? parseFloat(discountValue) : 0,
@@ -331,7 +333,7 @@ export async function registerRoutes(server: Server, app: Express) {
     try {
       const { 
         name, slugUtm, discountType, discountValue, influencerId, 
-        promoCode, productUrl, costFixed, commissionPercent, status, targetType // NEW
+        promoCode, productUrl, costFixed, commissionPercent, status, targetType
       } = req.body;
       
       const cleanInfluencerId = influencerId && influencerId.length > 0 ? influencerId : null;
@@ -341,7 +343,7 @@ export async function registerRoutes(server: Server, app: Express) {
           name,
           slugUtm,
           promoCode: promoCode || null,
-          targetType: targetType || "product", // NEW
+          targetType: targetType || "product",
           productUrl: productUrl || null,
           discountType,
           discountValue: discountValue ? parseFloat(discountValue) : 0,
@@ -370,7 +372,7 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 4. API CRUD INFLUENCEURS (Avec WhatsApp & Auto-Rating)
+  // 4. API CRUD INFLUENCEURS
   // ==============================================================================
 
   router.get("/api/influencers", async (req, res) => {
@@ -390,7 +392,6 @@ export async function registerRoutes(server: Server, app: Express) {
 
   router.post("/api/influencers", async (req, res) => {
     try {
-      // NOTE: internalRating retiré, whatsapp ajouté
       const { name, email, profileImageUrl, gender, internalNotes, whatsapp, socialAccounts: socialAccountsData } = req.body;
       
       const [newInf] = await db.insert(influencers).values({ 
@@ -398,9 +399,8 @@ export async function registerRoutes(server: Server, app: Express) {
         email: email || null, 
         profileImageUrl: profileImageUrl || null,
         gender: gender || null,
-        // internalRating supprimé (calculé auto)
         internalNotes: internalNotes || null,
-        whatsapp: whatsapp || null // NEW
+        whatsapp: whatsapp || null
       }).returning();
       
       if (socialAccountsData && socialAccountsData.length > 0) {
@@ -433,14 +433,13 @@ export async function registerRoutes(server: Server, app: Express) {
           profileImageUrl: profileImageUrl || null,
           gender: gender || null,
           internalNotes: internalNotes || null,
-          whatsapp: whatsapp || null // NEW
+          whatsapp: whatsapp || null
         })
         .where(eq(influencers.id, req.params.id))
         .returning();
       
       if (!updated) return res.status(404).json({ error: "Influencer not found" });
       
-      // Update Socials
       await db.delete(socialAccounts).where(eq(socialAccounts.influencerId, req.params.id));
       if (socialAccountsData && socialAccountsData.length > 0) {
         for (const account of socialAccountsData) {
@@ -477,7 +476,7 @@ export async function registerRoutes(server: Server, app: Express) {
       const allSocialAccounts = await db.select().from(socialAccounts);
       const allCampaigns = await db.select().from(campaigns);
       const allEvents = await db.select().from(events);
-      const allOrders = await db.select().from(orders); // Pour Revenue (2) dans le ROAS global
+      const allOrders = await db.select().from(orders);
 
       const influencersWithStats = allInfluencers.map(influencer => {
         const influencerCampaigns = allCampaigns.filter(c => c.influencerId === influencer.id);
@@ -488,23 +487,17 @@ export async function registerRoutes(server: Server, app: Express) {
         let totalOrders = 0;
 
         influencerCampaigns.forEach(campaign => {
-          // Revenue 1 (UTM)
+          // Revenu Pixel (UTM)
           const campaignEvents = allEvents.filter(e => e.utmCampaign === campaign.slugUtm);
           const rev1 = campaignEvents.filter(e => e.eventType === 'purchase').reduce((acc, curr) => acc + (curr.revenue || 0), 0);
           
-          // Revenue 2 (Promo Code)
+          // Revenu Orders (Promo Code)
           const code = campaign.promoCode ? campaign.promoCode.toLowerCase() : null;
           const rev2 = code 
             ? allOrders.filter(o => o.promoCode && o.promoCode.toLowerCase() === code).reduce((acc, curr) => acc + (curr.totalPrice || 0), 0)
             : 0;
 
-          // On prend le Max ou la somme ? Pour le ROAS global, prenons le Revenue (1) (Tracking) 
-          // ou le Revenue (2) si supérieur ? 
-          // Simplifions : On base le ROAS sur le Revenue (1) (Tracking direct) pour la fiabilité technique
-          // OU sur le Revenue (2) si dispo.
-          // LOGIQUE PROJET : On additionne tout le revenu généré (1 + 2 sans doublon c'est dur sans deduplication).
-          // Hypothèse : Revenue 2 inclut Revenue 1 si le code promo est utilisé.
-          // On va utiliser le Revenue le plus favorable pour l'influenceur pour calculer sa note.
+          // Pour le rating de l'influenceur, on prend le MAX des deux sources pour être juste
           const bestRevenue = Math.max(rev1, rev2);
 
           const fixedCost = campaign.costFixed || 0;
@@ -513,8 +506,10 @@ export async function registerRoutes(server: Server, app: Express) {
           totalRevenue += bestRevenue;
           totalCost += fixedCost + commissionCost;
 
-          // Count orders (approx)
-          totalOrders += (code ? allOrders.filter(o => o.promoCode === code).length : 0);
+          // Count orders (best of both)
+          const orders1 = campaignEvents.filter(e => e.eventType === 'purchase').length;
+          const orders2 = code ? allOrders.filter(o => o.promoCode === code).length : 0;
+          totalOrders += Math.max(orders1, orders2);
         });
 
         const roas = totalCost > 0 ? totalRevenue / totalCost : 0;
@@ -522,15 +517,15 @@ export async function registerRoutes(server: Server, app: Express) {
         // CALCUL AUTO DE LA NOTE (ÉTOILES)
         let calculatedRating = 0;
         if (influencerCampaigns.length === 0) {
-          calculatedRating = 0; // Aucune campagne
+          calculatedRating = 0;
         } else if (roas < 0) {
-          calculatedRating = 1; // < 0 (Rouge)
+          calculatedRating = 1;
         } else if (roas >= 0 && roas < 2) {
-          calculatedRating = 1; // 0 à 1.99 (Rouge)
+          calculatedRating = 1;
         } else if (roas >= 2 && roas < 4) {
-          calculatedRating = 2; // 2 à 4 (Vert)
+          calculatedRating = 2;
         } else {
-          calculatedRating = 3; // > 4 (Vert super)
+          calculatedRating = 3;
         }
 
         return {
@@ -540,9 +535,9 @@ export async function registerRoutes(server: Server, app: Express) {
           activeCampaigns: activeCampaigns.length,
           totalCost,
           totalRevenue,
-          totalOrders, // NEW
+          totalOrders,
           roas,
-          calculatedRating // NEW
+          calculatedRating
         };
       });
 
@@ -554,7 +549,7 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   // ==============================================================================
-  // 5. TRACKING & WEBHOOKS (Le Coeur du Revenue 2)
+  // 5. TRACKING & WEBHOOKS
   // ==============================================================================
 
   router.post("/api/tracking/event", async (req: Request, res: Response) => {
@@ -575,10 +570,9 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
-  // WEBHOOK ORDERS : Capture les commandes pour Revenue (2)
   router.post("/api/webhooks/orders/create", async (req: Request, res: Response) => {
     try {
-      const order = req.body; // Payload brut Shopify
+      const order = req.body;
       console.log(`💰 [Webhook] Order received: ${order.id} - Codes:`, order.discount_codes);
 
       const discountCodes = order.discount_codes || [];
@@ -588,7 +582,7 @@ export async function registerRoutes(server: Server, app: Express) {
         shopifyOrderId: order.id.toString(),
         totalPrice: parseFloat(order.total_price),
         currency: order.currency,
-        promoCode: primaryCode, // On stocke le code promo utilisé
+        promoCode: primaryCode,
         createdAt: new Date()
       }).onConflictDoUpdate({
         target: orders.shopifyOrderId,
@@ -677,7 +671,6 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
-  // Force Pixel Endpoint
   router.get("/api/force-pixel", async (req: Request, res: Response) => {
     const shop = req.query.shop as string;
     if (!shop) return res.json({ error: "Missing shop parameter" });
@@ -704,8 +697,8 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
-  // Debug Endpoints
   router.get("/api/webhooks/test", (req, res) => res.json({ status: "OK", time: new Date() }));
+  
   router.get("/api/debug/shop", async (req, res) => {
     const shop = req.query.shop as string;
     const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
