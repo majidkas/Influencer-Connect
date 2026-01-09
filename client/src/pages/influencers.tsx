@@ -33,7 +33,6 @@ import {
 import { InfluencerAvatar } from "@/components/influencer-avatar";
 import { SocialBadge } from "@/components/social-badge";
 import { useToast } from "@/hooks/use-toast";
-// CORRECTION : Ajout de "Upload" et "Star" dans les imports
 import { 
   Plus, Pencil, Trash2, X, Megaphone, DollarSign, TrendingUp, 
   MessageCircle, Mail, ShoppingBag, Upload, Star 
@@ -130,9 +129,9 @@ function InfluencerCard({
     }).format(amount);
   };
 
-  // --- LOGIQUE DE NOTATION 3 ETOILES ---
-  const renderRating = (roas: number) => {
-    // Cas spécial perte (attention : ROAS est souvent >= 0, mais si < 0 on affiche Loss)
+  // --- LOGIQUE DE NOTATION 3 ETOILES (Active) ---
+  const renderActiveRating = (roas: number) => {
+    // Cas spécial "Loss" (si ROAS < 0, bien que rare techniquement)
     if (roas < 0) {
       return <span className="text-red-600 font-bold text-xs flex items-center gap-1">⚠️ Loss !</span>;
     }
@@ -211,12 +210,26 @@ function InfluencerCard({
           )}
           
           <div className="mt-2 flex items-center gap-2">
-            {/* Appel de la nouvelle fonction de notation */}
-            {renderRating(influencer.roas)}
-            
-            <span className="text-xs text-muted-foreground ml-1">
-               (ROAS {influencer.roas.toFixed(2)})
-            </span>
+            {/* LOGIQUE D'AFFICHAGE DU RATING */}
+            {influencer.totalCampaigns === 0 ? (
+              // CAS: NOUVEL INFLUENCEUR (0 campagne)
+              <>
+                 <div className="flex gap-0.5">
+                   {[1, 2, 3].map((i) => (
+                     <Star key={i} className="h-4 w-4 text-muted-foreground/20" />
+                   ))}
+                 </div>
+                 <span className="text-xs text-muted-foreground ml-1">(New)</span>
+              </>
+            ) : (
+              // CAS: INFLUENCEUR ACTIF
+              <>
+                {renderActiveRating(influencer.roas)}
+                <span className="text-xs text-muted-foreground ml-1">
+                   (ROAS {influencer.roas.toFixed(2)})
+                </span>
+              </>
+            )}
           </div>
         </div>
       </CardHeader>
