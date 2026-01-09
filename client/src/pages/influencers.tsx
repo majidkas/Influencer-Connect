@@ -31,13 +31,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { InfluencerAvatar } from "@/components/influencer-avatar";
-import { StarRating } from "@/components/star-rating";
 import { SocialBadge } from "@/components/social-badge";
 import { useToast } from "@/hooks/use-toast";
-// CORRECTION ICI : Ajout de "Upload" dans les imports
+// CORRECTION : Ajout de "Upload" et "Star" dans les imports
 import { 
   Plus, Pencil, Trash2, X, Megaphone, DollarSign, TrendingUp, 
-  MessageCircle, Mail, ShoppingBag, Upload 
+  MessageCircle, Mail, ShoppingBag, Upload, Star 
 } from "lucide-react";
 import type { InfluencerWithSocials } from "@shared/schema";
 
@@ -131,6 +130,34 @@ function InfluencerCard({
     }).format(amount);
   };
 
+  // --- LOGIQUE DE NOTATION 3 ETOILES ---
+  const renderRating = (roas: number) => {
+    // Cas spécial perte (attention : ROAS est souvent >= 0, mais si < 0 on affiche Loss)
+    if (roas < 0) {
+      return <span className="text-red-600 font-bold text-xs flex items-center gap-1">⚠️ Loss !</span>;
+    }
+
+    let starCount = 0;
+    // 0 à 1.99 -> 1 étoile
+    if (roas >= 0 && roas < 2) starCount = 1;
+    // 2 à 3.99 -> 2 étoiles
+    else if (roas >= 2 && roas < 4) starCount = 2;
+    // > 4 -> 3 étoiles
+    else if (roas >= 4) starCount = 3;
+
+    // Rendu des 3 étoiles (pleines ou vides)
+    return (
+      <div className="flex gap-0.5">
+        {[1, 2, 3].map((i) => (
+          <Star 
+            key={i} 
+            className={`h-4 w-4 ${i <= starCount ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground/20"}`} 
+          />
+        ))}
+      </div>
+    );
+  };
+
   return (
     <Card className={`hover-elevate ${bgColor}`} data-testid={`card-influencer-${influencer.id}`}>
       <CardHeader className="flex flex-row items-start gap-4 pb-2">
@@ -152,17 +179,24 @@ function InfluencerCard({
             <h3 className="font-semibold text-lg truncate" data-testid="text-influencer-name">
               {influencer.name}
             </h3>
-            {/* WhatsApp Action */}
+            
+            {/* WhatsApp Button (Nouveau Design) */}
             {influencer.whatsapp && (
-              <a 
-                href={`https://wa.me/${influencer.whatsapp}`} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-green-500 hover:text-green-600 hover:bg-green-50 p-1.5 rounded-full transition-colors"
-                title="Open WhatsApp"
+              <Button 
+                size="sm" 
+                className="bg-green-500 hover:bg-green-600 text-white gap-1.5 h-7 px-2 text-xs font-medium rounded-full shadow-sm"
+                asChild
               >
-                <MessageCircle className="h-5 w-5" />
-              </a>
+                <a 
+                  href={`https://wa.me/${influencer.whatsapp}`} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  title="Open WhatsApp"
+                >
+                  <MessageCircle className="h-3.5 w-3.5" />
+                  Chat
+                </a>
+              </Button>
             )}
           </div>
           
@@ -177,10 +211,11 @@ function InfluencerCard({
           )}
           
           <div className="mt-2 flex items-center gap-2">
-            {/* Auto Rating Display */}
-            <StarRating rating={influencer.calculatedRating || 0} size="sm" />
-            <span className="text-xs text-muted-foreground">
-               ({influencer.roas > 0 ? `ROAS ${influencer.roas.toFixed(2)}` : "New"})
+            {/* Appel de la nouvelle fonction de notation */}
+            {renderRating(influencer.roas)}
+            
+            <span className="text-xs text-muted-foreground ml-1">
+               (ROAS {influencer.roas.toFixed(2)})
             </span>
           </div>
         </div>
@@ -458,7 +493,6 @@ function InfluencerFormDialog({
                     />
                   ) : (
                     <div className="text-center p-2">
-                      {/* C'est ici que le composant Upload était utilisé sans être importé */}
                       <Upload className="h-6 w-6 mx-auto mb-1 text-muted-foreground" />
                       <span className="text-[10px] text-muted-foreground">Upload</span>
                     </div>
