@@ -22,8 +22,9 @@ export const influencers = pgTable("influencers", {
   email: text("email"),
   profileImageUrl: text("profile_image_url"),
   gender: text("gender"),
-  internalRating: integer("internal_rating").default(0),
+  // SUPPRIMÉ : internalRating (le rating sera calculé dynamiquement)
   internalNotes: text("internal_notes"),
+  whatsapp: text("whatsapp"), // AJOUTÉ : Pour le contact WhatsApp
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -40,38 +41,42 @@ export const socialAccounts = pgTable("social_accounts", {
 // Campaigns table
 export const campaigns = pgTable("campaigns", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  influencerId: varchar("influencer_id"), // Rendu optionnel pour éviter les bugs si influenceur supprimé
+  influencerId: varchar("influencer_id"), 
   name: text("name").notNull(),
   slugUtm: text("slug_utm").notNull(),
   promoCode: text("promo_code"),
   discountType: text("discount_type"),
   discountValue: real("discount_value"),
+  
+  // MODIFICATION CIBLAGE
+  targetType: text("target_type").default("product"), // AJOUTÉ : "homepage" ou "product"
   productUrl: text("product_url"),
+  
   costFixed: real("cost_fixed").default(0),
   commissionPercent: real("commission_percent").default(0),
   status: text("status").default("active"),
-  shopId: integer("shop_id"), // Pour compatibilité future
+  shopId: integer("shop_id"), 
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Events table (CORRIGÉE POUR LE PIXEL)
+// Events table
 export const events = pgTable("events", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  // On utilise utmCampaign (texte) au lieu d'une Foreign Key stricte pour le logging brut
   utmCampaign: text("utm_campaign"), 
-  eventType: text("event_type").notNull(), // page_view, add_to_cart, purchase
+  eventType: text("event_type").notNull(), 
   sessionId: text("session_id"),
   revenue: real("revenue").default(0),
-  payload: jsonb("payload"), // AJOUTÉ : Pour stocker tout le détail JSON du pixel
+  payload: jsonb("payload"), 
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Orders table (AJOUTÉE car importée dans routes.ts)
+// Orders table
 export const orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   shopifyOrderId: text("shopify_order_id").notNull().unique(),
   totalPrice: real("total_price"),
   currency: text("currency"),
+  promoCode: text("promo_code"), // AJOUTÉ : Pour lier au Revenue (2) - Commandes hors lien tracké
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -93,7 +98,6 @@ export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
     fields: [campaigns.influencerId],
     references: [influencers.id],
   }),
-  // Relation retirée temporairement pour events car on utilise utmCampaign (loose coupling)
 }));
 
 // Insert schemas
@@ -124,6 +128,8 @@ export type CampaignWithStats = Campaign & {
   orders: number;
   promoCodeUsage: number;
   revenue: number;
+  revenuePromoOnly: number; // AJOUTÉ pour le typage frontend futur
   totalCost: number;
   roi: number;
+  conversionRate: number; // AJOUTÉ pour le typage frontend futur
 };
