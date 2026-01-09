@@ -35,24 +35,19 @@ import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Plus, Pencil, Trash2, Megaphone, Tag, Percent, Copy, Check, 
-  Loader2, Filter, ShoppingBag, Home 
+  Loader2, Filter, ShoppingBag, Home, MousePointer, TrendingUp 
 } from "lucide-react";
 import type { CampaignWithInfluencer, Influencer } from "@shared/schema";
 
 // --- TYPES & SCHEMA ---
 
 interface CampaignStats extends CampaignWithInfluencer {
-  // Data Onglet 1 (UTM)
   clicks: number;
   ordersUtm: number;
   revenueUtm: number;
   addToCarts: number;
-  
-  // Data Onglet 2 (Promo)
   ordersPromo: number;
   revenuePromo: number;
-
-  // Common
   fixedCost: number;
   commissionPercent: number;
   productImage?: string | null;
@@ -91,7 +86,6 @@ const formatCurrency = (amount: number, currency = "EUR"): string => {
   return new Intl.NumberFormat("fr-FR", { style: "currency", currency }).format(amount);
 };
 
-// Helper pour extraire le symbole (ex: €)
 const getCurrencySymbol = (currency = "EUR") => {
   try {
     return new Intl.NumberFormat("fr-FR", { style: "currency", currency })
@@ -140,21 +134,17 @@ function CampaignCard({
   // --- CALCULS DYNAMIQUES ---
   const isUtm = activeTab === "utm";
   
-  // 1. Revenue
   const revenue = isUtm ? campaign.revenueUtm : campaign.revenuePromo;
-  
-  // 2. Orders
   const orders = isUtm ? campaign.ordersUtm : campaign.ordersPromo;
   
-  // 3. Coûts
   const commissionCost = revenue * (campaign.commissionPercent / 100);
   const totalCost = campaign.fixedCost + commissionCost;
   
-  // 4. ROAS
   const roas = totalCost > 0 ? revenue / totalCost : 0;
   
-  // 5. Conv Rate
+  // Conv Rate (0 si pas UTM)
   const convRate = isUtm && campaign.clicks > 0 ? (orders / campaign.clicks) * 100 : 0;
+  const clicksDisplay = isUtm ? campaign.clicks : 0;
 
   const promoCountDisplay = isUtm ? campaign.ordersUtm : campaign.ordersPromo;
 
@@ -233,68 +223,67 @@ function CampaignCard({
           {renderTarget()}
         </div>
 
-        {/* PROMO CODE */}
+        {/* PROMO CODE + USED (NOUVEAU DESIGN LIGNE UNIQUE) */}
         {campaign.promoCode && (
-          <div className="flex justify-between items-start text-xs mt-2">
-            <span className="text-muted-foreground mt-1">Promo Code:</span>
-            <div className="flex flex-col items-end">
+          <div className="flex items-center justify-between text-xs mt-3">
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Promo Code:</span>
               <div className="flex items-center gap-1 font-mono font-medium bg-green-50 text-green-700 px-1.5 py-0.5 rounded border border-green-100">
                 <Tag className="h-3 w-3" />
                 {campaign.promoCode}
               </div>
-              <span className="text-[10px] text-muted-foreground font-medium mt-0.5">
-                Total: {promoCountDisplay}
-              </span>
             </div>
+            <span className="font-medium text-muted-foreground">
+              {promoCountDisplay} used
+            </span>
           </div>
         )}
 
-        {/* STATS GRID */}
-        <div className="grid grid-cols-2 gap-2 pt-2 border-t mt-2">
+        {/* STATS GRID REORGANISÉE */}
+        <div className="grid grid-cols-2 gap-y-3 gap-x-2 pt-3 border-t mt-2">
           
+          {/* LIGNE 1 : CLICKS | CONV RATE */}
           <div className="flex flex-col">
-            <span className="text-[10px] text-muted-foreground">Revenue</span>
-            <span className="font-semibold text-green-600">{formatCurrency(revenue, campaign.currency)}</span>
+            <span className="text-[10px] text-muted-foreground">Clicks:</span>
+            <span className="font-medium">{clicksDisplay}</span>
+          </div>
+          <div className="flex flex-col text-right">
+            <span className="text-[10px] text-muted-foreground">Conv. Rate:</span>
+            <span className="font-medium">{convRate.toFixed(1)}%</span>
           </div>
 
+          {/* LIGNE 2 : ORDERS | ROAS */}
           <div className="flex flex-col">
-            <span className="text-[10px] text-muted-foreground">ROAS</span>
+            <span className="text-[10px] text-muted-foreground">Orders:</span>
+            <span className="font-medium">{orders}</span>
+          </div>
+          <div className="flex flex-col text-right">
+            <span className="text-[10px] text-muted-foreground">ROAS:</span>
             <span className={`font-semibold ${roas >= 2 ? "text-green-600" : roas > 0 ? "text-orange-600" : "text-muted-foreground"}`}>
               {roas.toFixed(2)}
             </span>
           </div>
-          
+
+          {/* LIGNE 3 : TOTAL COST | COST (FIXED/VAR) */}
           <div className="flex flex-col">
-            <span className="text-[10px] text-muted-foreground">Total Cost</span>
+            <span className="text-[10px] text-muted-foreground">Total Cost:</span>
             <span className="font-medium">{formatCurrency(totalCost, campaign.currency)}</span>
           </div>
-
-          <div className="flex flex-col">
-            <span className="text-[10px] text-muted-foreground">Orders</span>
-            <span className="font-medium">{orders}</span>
+          <div className="flex flex-col text-right">
+            <span className="text-[10px] text-muted-foreground">Cost (Fixed/Variable):</span>
+            <span className="text-xs font-medium">
+              {formatCurrency(campaign.fixedCost, campaign.currency).replace(",00", "")} | {campaign.commissionPercent}%
+            </span>
           </div>
-
-          {/* AJOUT: DÉTAILS COÛTS */}
-          <div className="flex flex-col mt-1">
-            <span className="text-[10px] text-muted-foreground">Fixed Cost</span>
-            <span className="text-xs">{formatCurrency(campaign.fixedCost, campaign.currency)}</span>
-          </div>
-
-          <div className="flex flex-col mt-1">
-            <span className="text-[10px] text-muted-foreground">Commission</span>
-            <span className="text-xs">{campaign.commissionPercent}%</span>
-          </div>
-
-          {isUtm && (
-            <div className="flex flex-col col-span-2 mt-1 pt-1 border-t border-dashed">
-               <div className="flex justify-between items-center">
-                 <span className="text-[10px] text-muted-foreground">Conv. Rate ({campaign.clicks} clicks)</span>
-                 <span className="font-medium text-xs">{convRate.toFixed(1)}%</span>
-               </div>
-            </div>
-          )}
 
         </div>
+
+        {/* REVENUE SECTION (BAS) */}
+        <div className="flex justify-between items-center mt-3 pt-3 border-t border-dashed">
+           <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Revenue</span>
+           <span className="font-bold text-lg text-green-600">{formatCurrency(revenue, campaign.currency)}</span>
+        </div>
+
       </CardContent>
 
       <CardFooter className="flex justify-end gap-2 pt-2 border-t bg-muted/10">
@@ -411,7 +400,7 @@ function CampaignFormDialog({
   campaign,
   open,
   onOpenChange,
-  currencySymbol = "€" // Par défaut si non détecté
+  currencySymbol = "€"
 }: {
   campaign?: CampaignWithInfluencer;
   open: boolean;
@@ -668,7 +657,6 @@ function CampaignFormDialog({
                   <FormItem>
                     <FormLabel>Fixed Cost</FormLabel>
                     <div className="relative">
-                      {/* REMPLACEMENT DE L'ICÔNE $ PAR LA DEVISE DYNAMIQUE */}
                       <div className="absolute left-3 top-2.5 text-sm text-muted-foreground font-medium">
                         {currencySymbol}
                       </div>
@@ -723,7 +711,6 @@ export default function Campaigns() {
     },
   });
 
-  // Détection de la devise (basée sur la 1ère campagne trouvée ou EUR par défaut)
   const detectedCurrencySymbol = campaigns && campaigns.length > 0 
     ? getCurrencySymbol(campaigns[0].currency) 
     : "€";
