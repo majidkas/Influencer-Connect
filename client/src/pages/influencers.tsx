@@ -14,7 +14,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Form,
@@ -35,16 +34,33 @@ import { InfluencerAvatar } from "@/components/influencer-avatar";
 import { StarRating } from "@/components/star-rating";
 import { SocialBadge } from "@/components/social-badge";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Upload, Link as LinkIcon, Users, X, Megaphone, DollarSign, TrendingUp } from "lucide-react";
-import type { InfluencerWithSocials, InsertInfluencer, InsertSocialAccount } from "@shared/schema";
+import { 
+  Plus, Pencil, Trash2, X, Megaphone, DollarSign, TrendingUp, 
+  MessageCircle, Mail, ShoppingBag 
+} from "lucide-react";
+import type { InfluencerWithSocials } from "@shared/schema";
 
+// --- CONSTANTS ---
+const COUNTRY_CODES = [
+  { code: "33", label: "🇫🇷 +33" },
+  { code: "1", label: "🇺🇸/🇨🇦 +1" },
+  { code: "44", label: "🇬🇧 +44" },
+  { code: "32", label: "🇧🇪 +32" },
+  { code: "41", label: "🇨🇭 +41" },
+  { code: "34", label: "🇪🇸 +34" },
+  { code: "49", label: "🇩🇪 +49" },
+  { code: "39", label: "🇮🇹 +39" },
+  { code: "212", label: "🇲🇦 +212" },
+];
+
+// --- SCHEMAS ---
 const influencerFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Invalid email").optional().or(z.literal("")),
   profileImageUrl: z.string().optional().or(z.literal("")),
   gender: z.enum(["female", "male"]).optional(),
-  internalRating: z.number().min(0).max(5).default(0),
   internalNotes: z.string().optional().or(z.literal("")),
+  whatsapp: z.string().optional().or(z.literal("")), // Nouveau champ
 });
 
 type InfluencerFormData = z.infer<typeof influencerFormSchema>;
@@ -57,14 +73,19 @@ const socialAccountSchema = z.object({
 
 type SocialAccountFormData = z.infer<typeof socialAccountSchema>;
 
+// Interface étendue avec les nouvelles stats du backend
 interface InfluencerWithStats extends InfluencerWithSocials {
   totalCampaigns: number;
   activeCampaigns: number;
   totalCost: number;
   totalRevenue: number;
+  totalOrders: number;    // NEW
   roas: number;
+  calculatedRating: number; // NEW (Auto Rating)
+  whatsapp?: string;      // NEW
 }
 
+// --- COMPONENTS ---
 
 function InfluencerCardSkeleton() {
   return (
@@ -116,7 +137,7 @@ function InfluencerCard({
           <img 
             src={influencer.profileImageUrl} 
             alt={influencer.name}
-            className="h-16 w-16 rounded-full object-cover"
+            className="h-16 w-16 rounded-full object-cover border-2 border-white shadow-sm"
           />
         ) : (
           <InfluencerAvatar
@@ -126,14 +147,40 @@ function InfluencerCard({
           />
         )}
         <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-lg truncate" data-testid="text-influencer-name">
-            {influencer.name}
-          </h3>
+          <div className="flex justify-between items-start">
+            <h3 className="font-semibold text-lg truncate" data-testid="text-influencer-name">
+              {influencer.name}
+            </h3>
+            {/* WhatsApp Action */}
+            {influencer.whatsapp && (
+              <a 
+                href={`https://wa.me/${influencer.whatsapp}`} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-green-500 hover:text-green-600 hover:bg-green-50 p-1.5 rounded-full transition-colors"
+                title="Open WhatsApp"
+              >
+                <MessageCircle className="h-5 w-5" />
+              </a>
+            )}
+          </div>
+          
           {influencer.email && (
-            <p className="text-sm text-muted-foreground truncate">{influencer.email}</p>
+            <a 
+              href={`mailto:${influencer.email}`}
+              className="flex items-center text-sm text-muted-foreground hover:text-primary transition-colors truncate mt-0.5"
+            >
+              <Mail className="h-3 w-3 mr-1" />
+              {influencer.email}
+            </a>
           )}
-          <div className="mt-1">
-            <StarRating rating={influencer.internalRating || 0} size="sm" />
+          
+          <div className="mt-2 flex items-center gap-2">
+            {/* Auto Rating Display */}
+            <StarRating rating={influencer.calculatedRating || 0} size="sm" />
+            <span className="text-xs text-muted-foreground">
+               ({influencer.roas > 0 ? `ROAS ${influencer.roas.toFixed(2)}` : "New"})
+            </span>
           </div>
         </div>
       </CardHeader>
@@ -151,29 +198,30 @@ function InfluencerCard({
           </div>
         )}
         
-        {/* Stats */}
-        <div className="grid grid-cols-2 gap-2 pt-2 border-t">
-          <div className="flex items-center gap-1 text-sm">
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 gap-y-2 gap-x-4 pt-3 border-t">
+          <div className="flex items-center gap-2 text-sm">
             <Megaphone className="h-4 w-4 text-muted-foreground" />
-            <span className="text-muted-foreground">Campaigns:</span>
-            <span className="font-medium">{influencer.activeCampaigns}/{influencer.totalCampaigns}</span>
+            <span className="text-muted-foreground">Camp:</span>
+            <span className="font-medium ml-auto">{influencer.activeCampaigns}/{influencer.totalCampaigns}</span>
           </div>
-          <div className="flex items-center gap-1 text-sm">
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            <span className="text-muted-foreground">ROAS:</span>
-            <span className={`font-medium ${influencer.roas >= 1 ? "text-green-600" : influencer.roas > 0 ? "text-red-600" : ""}`}>
-              {influencer.roas.toFixed(2)}
-            </span>
+          
+          <div className="flex items-center gap-2 text-sm">
+            <ShoppingBag className="h-4 w-4 text-muted-foreground" />
+            <span className="text-muted-foreground">Orders:</span>
+            <span className="font-medium ml-auto">{influencer.totalOrders}</span>
           </div>
-          <div className="flex items-center gap-1 text-sm">
+
+          <div className="flex items-center gap-2 text-sm">
             <DollarSign className="h-4 w-4 text-red-500" />
-            <span className="text-muted-foreground">Coût:</span>
-            <span className="font-medium">{formatCurrency(influencer.totalCost)}</span>
+            <span className="text-muted-foreground">Cost:</span>
+            <span className="font-medium ml-auto">{formatCurrency(influencer.totalCost)}</span>
           </div>
-          <div className="flex items-center gap-1 text-sm">
+
+          <div className="flex items-center gap-2 text-sm">
             <DollarSign className="h-4 w-4 text-green-500" />
             <span className="text-muted-foreground">Rev:</span>
-            <span className="font-medium">{formatCurrency(influencer.totalRevenue)}</span>
+            <span className="font-medium ml-auto">{formatCurrency(influencer.totalRevenue)}</span>
           </div>
         </div>
       </CardContent>
@@ -202,13 +250,7 @@ function InfluencerCard({
   );
 }
 
-
-
-function SocialAccountForm({
-  onAdd,
-}: {
-  onAdd: (data: SocialAccountFormData) => void;
-}) {
+function SocialAccountForm({ onAdd }: { onAdd: (data: SocialAccountFormData) => void; }) {
   const form = useForm<SocialAccountFormData>({
     resolver: zodResolver(socialAccountSchema),
     defaultValues: {
@@ -234,7 +276,7 @@ function SocialAccountForm({
           <SelectTrigger data-testid="select-platform">
             <SelectValue placeholder="Platform" />
           </SelectTrigger>
-<SelectContent>
+          <SelectContent>
             <SelectItem value="instagram">Instagram</SelectItem>
             <SelectItem value="tiktok">TikTok</SelectItem>
             <SelectItem value="snapchat">Snapchat</SelectItem>
@@ -255,12 +297,7 @@ function SocialAccountForm({
           data-testid="input-followers"
         />
       </div>
-      <Button
-        type="button"
-        size="sm"
-        onClick={form.handleSubmit(onSubmit)}
-        data-testid="button-add-social"
-      >
+      <Button type="button" size="sm" onClick={form.handleSubmit(onSubmit)} data-testid="button-add-social">
         <Plus className="h-4 w-4 mr-1" />
         Add Account
       </Button>
@@ -273,39 +310,30 @@ function InfluencerFormDialog({
   open,
   onOpenChange,
 }: {
-  influencer?: InfluencerWithSocials;
+  influencer?: InfluencerWithSocials & { whatsapp?: string };
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const { toast } = useToast();
 
-
-const [socialAccounts, setSocialAccounts] = useState<SocialAccountFormData[]>(
-    influencer?.socialAccounts?.map((a) => ({
-      platform: a.platform as "instagram" | "tiktok" | "snapchat" | "youtube",
-      handle: a.handle,
-      followersCount: a.followersCount || 0,
-    })) || []
-  );
-
-
-
-const [imageInputType, setImageInputType] = useState<"url" | "upload">("url");
+  const [socialAccounts, setSocialAccounts] = useState<SocialAccountFormData[]>([]);
+  // Local state for WhatsApp split fields
+  const [phonePrefix, setPhonePrefix] = useState("33");
+  const [phoneNumber, setPhoneNumber] = useState("");
 
   const form = useForm<InfluencerFormData>({
     resolver: zodResolver(influencerFormSchema),
     defaultValues: {
-      name: influencer?.name || "",
-      email: influencer?.email || "",
-      profileImageUrl: influencer?.profileImageUrl || "",
-      gender: (influencer as any)?.gender || undefined,
-      internalRating: influencer?.internalRating || 0,
-      internalNotes: influencer?.internalNotes || "",
+      name: "",
+      email: "",
+      profileImageUrl: "",
+      gender: undefined,
+      internalNotes: "",
+      whatsapp: "",
     },
   });
 
-
-// Reset form when dialog opens or influencer changes
+  // Reset form when dialog opens or influencer changes
   useEffect(() => {
     if (open) {
       form.reset({
@@ -313,16 +341,32 @@ const [imageInputType, setImageInputType] = useState<"url" | "upload">("url");
         email: influencer?.email || "",
         profileImageUrl: influencer?.profileImageUrl || "",
         gender: (influencer as any)?.gender || undefined,
-        internalRating: influencer?.internalRating || 0,
         internalNotes: influencer?.internalNotes || "",
+        whatsapp: influencer?.whatsapp || "",
       });
+
       setSocialAccounts(
         influencer?.socialAccounts?.map((a) => ({
-          platform: a.platform as "instagram" | "tiktok" | "snapchat" | "youtube",
+          platform: a.platform as any,
           handle: a.handle,
           followersCount: a.followersCount || 0,
         })) || []
       );
+
+      // Split WhatsApp if exists
+      if (influencer?.whatsapp) {
+        // Simple logic: check if starts with known code
+        const foundCode = COUNTRY_CODES.find(c => influencer.whatsapp?.startsWith(c.code));
+        if (foundCode) {
+          setPhonePrefix(foundCode.code);
+          setPhoneNumber(influencer.whatsapp.slice(foundCode.code.length));
+        } else {
+          setPhoneNumber(influencer.whatsapp); // Fallback
+        }
+      } else {
+        setPhonePrefix("33");
+        setPhoneNumber("");
+      }
     }
   }, [open, influencer, form]);
 
@@ -346,7 +390,7 @@ const [imageInputType, setImageInputType] = useState<"url" | "upload">("url");
       const response = await apiRequest("PATCH", `/api/influencers/${influencer?.id}`, data);
       return response.json();
     },
- onSuccess: () => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/influencers/stats"] });
       toast({ title: "Influencer updated successfully" });
       onOpenChange(false);
@@ -357,7 +401,18 @@ const [imageInputType, setImageInputType] = useState<"url" | "upload">("url");
   });
 
   const onSubmit = (data: InfluencerFormData) => {
-    const payload = { ...data, socialAccounts };
+    // Combine Phone
+    let finalWhatsapp = "";
+    if (phoneNumber) {
+      finalWhatsapp = `${phonePrefix}${phoneNumber.replace(/^0+/, "")}`; // Remove leading zero if user added it
+    }
+
+    const payload = { 
+      ...data, 
+      whatsapp: finalWhatsapp,
+      socialAccounts 
+    };
+
     if (influencer) {
       updateMutation.mutate(payload);
     } else {
@@ -386,16 +441,12 @@ const [imageInputType, setImageInputType] = useState<"url" | "upload">("url");
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
 
-
-
-
-
-{/* Photo + Name + Rating sur la même ligne */}
+            {/* Photo + Name + WhatsApp sur la même ligne */}
             <div className="flex items-start gap-4">
               {/* Photo upload */}
               <div className="flex flex-col items-center">
                 <div 
-                  className="h-24 w-24 rounded-full bg-muted flex items-center justify-center cursor-pointer hover:bg-muted/80 overflow-hidden"
+                  className="h-24 w-24 rounded-full bg-muted flex items-center justify-center cursor-pointer hover:bg-muted/80 overflow-hidden border border-border"
                   onClick={() => document.getElementById('photo-upload')?.click()}
                 >
                   {form.watch("profileImageUrl") ? (
@@ -405,7 +456,10 @@ const [imageInputType, setImageInputType] = useState<"url" | "upload">("url");
                       className="h-full w-full object-cover"
                     />
                   ) : (
-                    <span className="text-sm text-muted-foreground text-center px-2">Importer une photo</span>
+                    <div className="text-center p-2">
+                      <Upload className="h-6 w-6 mx-auto mb-1 text-muted-foreground" />
+                      <span className="text-[10px] text-muted-foreground">Upload</span>
+                    </div>
                   )}
                 </div>
                 <input
@@ -413,46 +467,29 @@ const [imageInputType, setImageInputType] = useState<"url" | "upload">("url");
                   type="file"
                   accept="image/*"
                   className="hidden"
-
-
-
-
-onChange={async (e) => {
+                  onChange={async (e) => {
                     const file = e.target.files?.[0];
                     if (!file) return;
-                    
                     if (file.size > 2 * 1024 * 1024) {
-                      alert("L'image doit faire moins de 2 Mo");
-                      return;
+                      alert("Max size 2MB"); return;
                     }
-                    
                     const formData = new FormData();
                     formData.append("image", file);
-                    
                     try {
                       const response = await fetch("/api/upload-image", {
                         method: "POST",
                         body: formData,
                       });
                       const data = await response.json();
-                      if (data.url) {
-                        form.setValue("profileImageUrl", data.url);
-                      } else {
-                        alert("Erreur lors de l'upload");
-                      }
+                      if (data.url) form.setValue("profileImageUrl", data.url);
                     } catch (err) {
-                      console.error("Upload error:", err);
-                      alert("Erreur lors de l'upload");
+                      console.error(err);
                     }
                   }}
-
-
-
-
                 />
               </div>
 
-              {/* Name + Rating */}
+              {/* Name + WhatsApp Inputs */}
               <div className="flex-1 space-y-3">
                 <FormField
                   control={form.control}
@@ -468,31 +505,27 @@ onChange={async (e) => {
                   )}
                 />
 
-                <FormField
-                  control={form.control}
-                  name="internalRating"
-                  render={({ field }) => (
-                    <FormItem>
-                      <div className="flex items-center gap-2">
-                        <FormLabel>Rating</FormLabel>
-                        <StarRating
-                          rating={field.value || 0}
-                          size="lg"
-                          interactive
-                          onChange={field.onChange}
-                        />
-                        <button
-                          type="button"
-                          className="text-sm text-muted-foreground hover:text-foreground"
-                          onClick={() => field.onChange(0)}
-                        >
-                          Reset.
-                        </button>
-                      </div>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <div className="space-y-2">
+                  <FormLabel>WhatsApp</FormLabel>
+                  <div className="flex gap-2">
+                    <Select value={phonePrefix} onValueChange={setPhonePrefix}>
+                      <SelectTrigger className="w-[110px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {COUNTRY_CODES.map((c) => (
+                          <SelectItem key={c.code} value={c.code}>{c.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input 
+                      placeholder="612345678" 
+                      value={phoneNumber}
+                      onChange={(e) => setPhoneNumber(e.target.value.replace(/[^0-9]/g, ''))}
+                      className="flex-1"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -512,7 +545,7 @@ onChange={async (e) => {
                           value="female"
                           checked={field.value === "female"}
                           onChange={() => field.onChange("female")}
-                          className="h-4 w-4"
+                          className="h-4 w-4 accent-pink-500"
                         />
                         <span>Female</span>
                       </label>
@@ -523,7 +556,7 @@ onChange={async (e) => {
                           value="male"
                           checked={field.value === "male"}
                           onChange={() => field.onChange("male")}
-                          className="h-4 w-4"
+                          className="h-4 w-4 accent-blue-500"
                         />
                         <span>Male</span>
                       </label>
@@ -555,11 +588,6 @@ onChange={async (e) => {
               )}
             />
 
-
-
-
-
-
             <FormField
               control={form.control}
               name="internalNotes"
@@ -579,12 +607,13 @@ onChange={async (e) => {
               )}
             />
 
-            <div className="space-y-3">
+            {/* Social Accounts Section */}
+            <div className="space-y-3 pt-2 border-t">
               <h4 className="font-medium">Social Accounts</h4>
               {socialAccounts.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {socialAccounts.map((account, index) => (
-                    <div key={index} className="flex items-center gap-1">
+                    <div key={index} className="flex items-center gap-1 bg-muted px-2 py-1 rounded-full text-sm">
                       <SocialBadge
                         platform={account.platform}
                         handle={account.handle}
@@ -594,7 +623,7 @@ onChange={async (e) => {
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="h-6 w-6"
+                        className="h-5 w-5 rounded-full ml-1"
                         onClick={() => handleRemoveSocialAccount(index)}
                       >
                         <X className="h-3 w-3" />
@@ -627,10 +656,10 @@ onChange={async (e) => {
 
 export default function Influencers() {
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingInfluencer, setEditingInfluencer] = useState<InfluencerWithSocials | undefined>();
+  const [editingInfluencer, setEditingInfluencer] = useState<InfluencerWithStats | undefined>();
   const { toast } = useToast();
 
-const { data: influencers, isLoading } = useQuery<InfluencerWithStats[]>({
+  const { data: influencers, isLoading } = useQuery<InfluencerWithStats[]>({
     queryKey: ["/api/influencers/stats"],
   });
 
@@ -638,7 +667,7 @@ const { data: influencers, isLoading } = useQuery<InfluencerWithStats[]>({
     mutationFn: async (id: string) => {
       await apiRequest("DELETE", `/api/influencers/${id}`);
     },
-onSuccess: () => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/influencers/stats"] });
       toast({ title: "Influencer deleted successfully" });
     },
@@ -647,7 +676,7 @@ onSuccess: () => {
     },
   });
 
-  const handleEdit = (influencer: InfluencerWithSocials) => {
+  const handleEdit = (influencer: InfluencerWithStats) => {
     setEditingInfluencer(influencer);
     setDialogOpen(true);
   };
