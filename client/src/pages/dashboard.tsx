@@ -23,7 +23,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Users, Megaphone, DollarSign, TrendingUp, MousePointer, ShoppingCart, 
-  Package, Tag, Copy, Check, Link, CreditCard, Home 
+  Package, Tag, Copy, Check, CreditCard, Home 
 } from "lucide-react";
 import type { CampaignWithStats } from "@shared/schema";
 
@@ -54,8 +54,59 @@ const formatNumber = (num: number): string => {
   return new Intl.NumberFormat("en-US").format(num);
 };
 
-// ... (StatCard, DashboardTableSkeleton, TargetCell identiques au précédent envoi)
-// ... Je remets TargetCell pour la complétude
+// --- COMPOSANTS UTILITAIRES (MANQUANTS DANS LA VERSION PRÉCÉDENTE) ---
+
+function StatCard({
+  title,
+  value,
+  icon: Icon,
+  trend,
+}: {
+  title: string;
+  value: string;
+  icon: React.ElementType;
+  trend?: number;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground">
+          {title}
+        </CardTitle>
+        <Icon className="h-4 w-4 text-muted-foreground" />
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-bold">
+          {value}
+        </div>
+        {trend !== undefined && (
+          <p className={`text-xs mt-1 ${trend >= 0 ? "text-green-600" : "text-red-600"}`}>
+            {trend >= 0 ? "+" : ""}{trend}% from last month
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function DashboardTableSkeleton() {
+  return (
+    <div className="space-y-4">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="flex items-center gap-4">
+          <Skeleton className="h-10 w-10 rounded-full" />
+          <div className="space-y-2 flex-1">
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="h-3 w-24" />
+          </div>
+          <Skeleton className="h-6 w-16" />
+          <Skeleton className="h-4 w-20" />
+          <Skeleton className="h-4 w-20" />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function TargetCell({ campaign }: { campaign: CampaignDashboardStats }) {
   if (campaign.targetType === "homepage") {
@@ -81,7 +132,16 @@ function TargetCell({ campaign }: { campaign: CampaignDashboardStats }) {
       ) : (
         <div className="h-8 w-8 bg-muted rounded flex-shrink-0" />
       )}
-      <span className="text-sm truncate capitalize">{displayName}</span>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="text-sm truncate capitalize cursor-default">{displayName}</span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>{displayName}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     </div>
   );
 }
@@ -121,7 +181,16 @@ export default function Dashboard() {
   // ETAT POUR LES ONGLETS
   const [activeTab, setActiveTab] = useState<"utm" | "promo">("utm");
 
-  const { data: stats, isLoading: statsLoading } = useQuery({ queryKey: ["/api/stats"] });
+  const { data: stats, isLoading: statsLoading } = useQuery<{
+    totalInfluencers: number;
+    activeCampaigns: number;
+    totalRevenue: number;
+    totalCosts: number;
+    averageRoas: number;
+  }>({ 
+    queryKey: ["/api/stats"] 
+  });
+  
   const { data: campaigns, isLoading: campaignsLoading } = useQuery<CampaignDashboardStats[]>({
     queryKey: ["/api/campaigns/stats"],
   });
@@ -156,11 +225,48 @@ export default function Dashboard() {
         <p className="text-muted-foreground">Track your influencer marketing performance and ROI</p>
       </div>
 
-      {/* STATS CARDS (GLOBAL) - Inchangé */}
+      {/* STATS CARDS (GLOBAL) */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-         {/* ... (Je garde les stats globales telles quelles pour l'instant) */}
-         {/* Si tu veux que les cartes du haut changent aussi selon l'onglet, dis-le moi, 
-             mais généralement le dashboard global montre tout cumulé. */}
+        {statsLoading ? (
+          Array.from({ length: 5 }).map((_, i) => (
+            <Card key={i}>
+              <CardHeader className="pb-2">
+                <Skeleton className="h-4 w-24" />
+              </CardHeader>
+              <CardContent>
+                <Skeleton className="h-8 w-16" />
+              </CardContent>
+            </Card>
+          ))
+        ) : (
+          <>
+            <StatCard
+              title="Total Influencers"
+              value={formatNumber(stats?.totalInfluencers || 0)}
+              icon={Users}
+            />
+            <StatCard
+              title="Active Campaigns"
+              value={formatNumber(stats?.activeCampaigns || 0)}
+              icon={Megaphone}
+            />
+            <StatCard
+              title="Total Revenue"
+              value={formatCurrency(stats?.totalRevenue || 0)}
+              icon={DollarSign}
+            />
+            <StatCard
+              title="Total Costs"
+              value={formatCurrency(stats?.totalCosts || 0)}
+              icon={CreditCard}
+            />
+            <StatCard
+              title="Average ROAS"
+              value={(stats?.averageRoas || 0).toFixed(2)}
+              icon={TrendingUp}
+            />
+          </>
+        )}
       </div>
 
       <Card>
@@ -168,13 +274,13 @@ export default function Dashboard() {
           <CardTitle>Campaign Performance</CardTitle>
           
           {/* TABS SWITCHER */}
-          <div className="flex p-1 bg-muted rounded-lg">
+          <div className="flex p-1 bg-muted rounded-lg border">
             <button
               onClick={() => setActiveTab("utm")}
               className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
                 activeTab === "utm" 
-                  ? "bg-white text-foreground shadow-sm" 
-                  : "text-muted-foreground hover:text-foreground"
+                  ? "bg-background text-foreground shadow-sm" 
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
               }`}
             >
               Lien UTM + Code Promo
@@ -183,8 +289,8 @@ export default function Dashboard() {
               onClick={() => setActiveTab("promo")}
               className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
                 activeTab === "promo" 
-                  ? "bg-white text-foreground shadow-sm" 
-                  : "text-muted-foreground hover:text-foreground"
+                  ? "bg-background text-foreground shadow-sm" 
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
               }`}
             >
               Code Promo Uniquement
@@ -196,7 +302,11 @@ export default function Dashboard() {
           {campaignsLoading ? (
             <DashboardTableSkeleton />
           ) : !campaigns || campaigns.length === 0 ? (
-            <div className="text-center py-12">No campaigns yet.</div>
+            <div className="text-center py-12">
+              <Megaphone className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <h3 className="text-lg font-medium mb-2">No campaigns yet</h3>
+              <p className="text-muted-foreground text-sm">Create your first campaign to start tracking.</p>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
