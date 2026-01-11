@@ -8,34 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { InfluencerAvatar } from "@/components/influencer-avatar";
 import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
-import { 
-  Plus, Pencil, Trash2, Megaphone, Tag, Percent, Copy, Check, 
-  Loader2, Filter, ShoppingBag, Home 
-} from "lucide-react";
+import { Plus, Pencil, Trash2, Megaphone, Tag, Percent, Copy, Check, Loader2, Filter, ShoppingBag, Home } from "lucide-react";
 import { useI18n } from "@/lib/i18nContext";
 import { useDate } from "@/lib/date-context";
 import type { CampaignWithInfluencer, Influencer } from "@shared/schema";
@@ -138,8 +117,6 @@ function CampaignCard({
   const orders = campaign.ordersUtm; 
   
   // Utilisation "Vérifiée" du Code Promo (Calculée par le backend via intersection)
-  // Scénario 2: UTM + Code => ordersPromo = 1
-  // Scénario 1, 3, 5: Code manquant, mauvais code ou pas de lien => ordersPromo = 0
   const promoCountDisplay = campaign.ordersPromo; 
 
   const commissionCost = revenue * (campaign.commissionPercent / 100);
