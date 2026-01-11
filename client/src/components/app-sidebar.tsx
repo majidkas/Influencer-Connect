@@ -11,33 +11,36 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-
-const menuItems = [
-  {
-    title: "Dashboard",
-    url: "/",
-    icon: BarChart3,
-  },
-  {
-    title: "Influencers",
-    url: "/influencers",
-    icon: Users,
-  },
-  {
-    title: "Campaigns",
-    url: "/campaigns",
-    icon: Megaphone,
-  },
-  // AJOUT DU MENU SETTINGS
-  {
-    title: "Settings",
-    url: "/settings",
-    icon: Settings,
-  },
-];
+// IMPORT DU HOOK
+import { useI18n } from "@/lib/i18nContext";
 
 export function AppSidebar() {
   const [location] = useLocation();
+  const { t } = useI18n(); // On récupère la fonction t
+
+  // On définit le menu DANS le composant pour pouvoir utiliser t()
+  const menuItems = [
+    {
+      title: t("nav.dashboard"), // Utilisation de la clé
+      url: "/",
+      icon: BarChart3,
+    },
+    {
+      title: t("nav.influencers"),
+      url: "/influencers",
+      icon: Users,
+    },
+    {
+      title: t("nav.campaigns"),
+      url: "/campaigns",
+      icon: Megaphone,
+    },
+    {
+      title: t("nav.settings"),
+      url: "/settings",
+      icon: Settings,
+    },
+  ];
 
   return (
     <Sidebar>
@@ -51,7 +54,7 @@ export function AppSidebar() {
               Influencer Analytics
             </span>
             <span className="text-xs text-muted-foreground">
-              Track ROI
+              {t("nav.subtitle")}
             </span>
           </div>
         </Link>
@@ -64,11 +67,10 @@ export function AppSidebar() {
               {menuItems.map((item) => {
                 const isActive = location === item.url;
                 return (
-                  <SidebarMenuItem key={item.title}>
+                  <SidebarMenuItem key={item.url}>
                     <SidebarMenuButton
                       asChild
                       isActive={isActive}
-                      data-testid={`nav-${item.title.toLowerCase()}`}
                     >
                       <Link href={item.url}>
                         <item.icon className="h-4 w-4" />
