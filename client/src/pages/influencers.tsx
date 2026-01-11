@@ -14,6 +14,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription, // Ajout pour éviter le warning d'accessibilité
 } from "@/components/ui/dialog";
 import {
   Form,
@@ -240,13 +241,20 @@ function InfluencerFormDialog({ influencer, open, onOpenChange }: { influencer?:
     if (influencer) updateMutation.mutate(payload); else createMutation.mutate(payload);
   };
 
+  // --- CORRECTION ICI : Ajout de la variable manquante ---
+  const isPending = createMutation.isPending || updateMutation.isPending;
+
   const handleAddSocialAccount = (account: SocialAccountFormData) => { setSocialAccounts((prev) => [...prev, account]); };
   const handleRemoveSocialAccount = (index: number) => { setSocialAccounts((prev) => prev.filter((_, i) => i !== index)); };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>{influencer ? t("inf.form.edit_title") : t("inf.form.add_title")}</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>{influencer ? t("inf.form.edit_title") : t("inf.form.add_title")}</DialogTitle>
+          {/* Ajout d'une description invisible pour l'accessibilité si nécessaire */}
+          <DialogDescription className="sr-only">Form to add or edit an influencer</DialogDescription>
+        </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <div className="flex items-start gap-4">
@@ -271,7 +279,7 @@ function InfluencerFormDialog({ influencer, open, onOpenChange }: { influencer?:
             <FormField control={form.control} name="email" render={({ field }) => (<FormItem><FormLabel>{t("inf.form.email")}</FormLabel><FormControl><Input type="email" placeholder="sarah@example.com" {...field} value={field.value || ""} /></FormControl><FormMessage /></FormItem>)} />
             <FormField control={form.control} name="internalNotes" render={({ field }) => (<FormItem><FormLabel>{t("inf.form.notes")}</FormLabel><FormControl><Textarea placeholder="Notes..." {...field} value={field.value || ""} /></FormControl><FormMessage /></FormItem>)} />
             <div className="space-y-3 pt-2 border-t"><h4 className="font-medium">{t("inf.form.socials")}</h4>{socialAccounts.length > 0 && (<div className="flex flex-wrap gap-2">{socialAccounts.map((account, index) => (<div key={index} className="flex items-center gap-1 bg-muted px-2 py-1 rounded-full text-sm"><SocialBadge platform={account.platform} handle={account.handle} followersCount={account.followersCount} /><Button type="button" variant="ghost" size="icon" className="h-5 w-5 rounded-full ml-1" onClick={() => handleRemoveSocialAccount(index)}><X className="h-3 w-3" /></Button></div>))}</div>)}<SocialAccountForm onAdd={handleAddSocialAccount} /></div>
-            <div className="flex justify-end gap-2 pt-4"><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button><Button type="submit" disabled={isPending || updateMutation.isPending}>{influencer ? t("common.update") : t("common.create")}</Button></div>
+            <div className="flex justify-end gap-2 pt-4"><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>{t("common.cancel")}</Button><Button type="submit" disabled={isPending}>{influencer ? t("common.update") : t("common.create")}</Button></div>
           </form>
         </Form>
       </DialogContent>
