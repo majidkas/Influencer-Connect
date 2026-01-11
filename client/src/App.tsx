@@ -10,6 +10,8 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import Dashboard from "@/pages/dashboard";
 import Influencers from "@/pages/influencers";
 import Campaigns from "@/pages/campaigns";
+// AJOUT DE L'IMPORT
+import SettingsPage from "@/pages/settings"; 
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -18,6 +20,8 @@ function Router() {
       <Route path="/" component={Dashboard} />
       <Route path="/influencers" component={Influencers} />
       <Route path="/campaigns" component={Campaigns} />
+      {/* AJOUT DE LA ROUTE */}
+      <Route path="/settings" component={SettingsPage} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -1,4 +1,4 @@
-import { BarChart3, Users, Megaphone, TrendingUp } from "lucide-react";
+import { BarChart3, Users, Megaphone, TrendingUp, Settings } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -27,6 +27,12 @@ const menuItems = [
     title: "Campaigns",
     url: "/campaigns",
     icon: Megaphone,
+  },
+  // AJOUT DU MENU SETTINGS
+  {
+    title: "Settings",
+    url: "/settings",
+    icon: Settings,
   },
 ];
 
