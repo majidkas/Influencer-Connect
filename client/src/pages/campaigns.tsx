@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -35,7 +35,8 @@ import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Plus, Pencil, Trash2, Megaphone, Tag, Percent, Copy, Check, 
-  Loader2, Filter, ShoppingBag, Home, MousePointer, TrendingUp 
+  Loader2, Filter, ShoppingBag, Home, MousePointer, TrendingUp,
+  ArrowDownWideNarrow, ArrowUpNarrowWide, Calendar
 } from "lucide-react";
 import type { CampaignWithInfluencer, Influencer } from "@shared/schema";
 
@@ -54,6 +55,7 @@ interface CampaignStats extends CampaignWithInfluencer {
   productTitle?: string | null;
   currency?: string;
   promoCodeUsage?: number;
+  createdAt?: string | Date; // Important pour le tri par date
 }
 
 const campaignFormSchema = z.object({
@@ -142,7 +144,6 @@ function CampaignCard({
   
   const roas = totalCost > 0 ? revenue / totalCost : 0;
   
-  // Conv Rate (0 si pas UTM)
   const convRate = isUtm && campaign.clicks > 0 ? (orders / campaign.clicks) * 100 : 0;
   const clicksDisplay = isUtm ? campaign.clicks : 0;
 
@@ -218,12 +219,10 @@ function CampaignCard({
       
       <CardContent className="space-y-3 flex-1 text-sm">
         
-        {/* TARGET */}
         <div className="bg-muted/30 p-2 rounded border border-border/50">
           {renderTarget()}
         </div>
 
-        {/* PROMO CODE + USED */}
         {campaign.promoCode && (
           <div className="flex items-center justify-between text-xs mt-3">
             <div className="flex items-center gap-2">
@@ -239,7 +238,6 @@ function CampaignCard({
           </div>
         )}
 
-        {/* STATS GRID */}
         <div className="grid grid-cols-2 gap-y-3 gap-x-2 pt-3 border-t mt-2">
           
           <div className="flex flex-col">
@@ -359,7 +357,6 @@ function SponsoredLinkCopier({
     if (targetType === "homepage") {
       return `https://${shopDomain}?utm_campaign=${slugUtm}`;
     }
-    // Correction : on vérifie juste que l'URL existe, peu importe si elle a été construite manuellement ou non
     if (productUrl && slugUtm) {
       const separator = productUrl.includes("?") ? "&" : "?";
       return `${productUrl}${separator}utm_campaign=${slugUtm}`;
@@ -505,7 +502,6 @@ function CampaignFormDialog({
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             
-            {/* Influencer Select */}
             <FormField
               control={form.control}
               name="influencerId"
@@ -603,8 +599,6 @@ function CampaignFormDialog({
                         <SelectContent>
                           <SelectItem value="none">No Product</SelectItem>
                           {productsData?.products?.map((p) => {
-                            // CORRECTIF: Si l'API renvoie une URL vide (null/"" comme souvent sur les dev stores), 
-                            // on reconstruit l'URL manuellement avec le handle.
                             const robustUrl = p.url && p.url.length > 0 
                               ? p.url 
                               : `https://${shopDomain}/products/${p.handle}`;
@@ -703,15 +697,16 @@ function CampaignFormDialog({
 export default function Campaigns() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<CampaignStats | undefined>();
-  const [sortBy, setSortBy] = useState<string>("recent");
+  const [sortBy, setSortBy] = useState<string>("date_desc");
   const [activeTab, setActiveTab] = useState<"utm" | "promo">("utm");
   
   const { toast } = useToast();
 
+  // On récupère toutes les campagnes sans tri API (on trie côté client pour gérer les onglets)
   const { data: campaigns, isLoading } = useQuery<CampaignStats[]>({
-    queryKey: ["/api/campaigns/stats", sortBy],
+    queryKey: ["/api/campaigns/stats"],
     queryFn: async () => {
-      const res = await fetch(`/api/campaigns/stats?sort=${sortBy}`);
+      const res = await fetch(`/api/campaigns/stats`);
       return res.json();
     },
   });
@@ -731,6 +726,47 @@ export default function Campaigns() {
   const handleDelete = (id: string) => {
     if (confirm("Delete this campaign?")) deleteMutation.mutate(id);
   };
+
+  // --- LOGIQUE DE TRI CÔTÉ CLIENT ---
+  const sortedCampaigns = useMemo(() => {
+    if (!campaigns) return [];
+    
+    return [...campaigns].sort((a, b) => {
+      const isUtm = activeTab === "utm";
+
+      // Helper pour calculer les valeurs dynamiques selon l'onglet
+      const getStats = (c: CampaignStats) => {
+        const rev = isUtm ? c.revenueUtm : c.revenuePromo;
+        const comm = rev * (c.commissionPercent / 100);
+        const cost = c.fixedCost + comm;
+        const roas = cost > 0 ? rev / cost : 0;
+        return { rev, cost, roas, date: new Date(c.createdAt || 0).getTime() };
+      };
+
+      const statsA = getStats(a);
+      const statsB = getStats(b);
+
+      switch (sortBy) {
+        // Date
+        case "date_desc": return statsB.date - statsA.date;
+        case "date_asc": return statsA.date - statsB.date;
+        
+        // Revenue
+        case "rev_desc": return statsB.rev - statsA.rev;
+        case "rev_asc": return statsA.rev - statsB.rev;
+        
+        // ROAS
+        case "roas_desc": return statsB.roas - statsA.roas;
+        case "roas_asc": return statsA.roas - statsB.roas;
+        
+        // Cost
+        case "cost_desc": return statsB.cost - statsA.cost;
+        case "cost_asc": return statsA.cost - statsB.cost;
+        
+        default: return 0;
+      }
+    });
+  }, [campaigns, sortBy, activeTab]);
 
   return (
     <div className="p-6 space-y-6">
@@ -767,14 +803,19 @@ export default function Campaigns() {
             </div>
 
             <Select value={sortBy} onValueChange={setSortBy}>
-              <SelectTrigger className="w-[140px]">
+              <SelectTrigger className="w-[180px]">
                 <Filter className="w-4 h-4 mr-2" />
                 <SelectValue placeholder="Sort by" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="recent">Recent</SelectItem>
-                <SelectItem value="revenue_high">Revenue ⬇</SelectItem>
-                <SelectItem value="roas_high">ROAS ⬇</SelectItem>
+                <SelectItem value="date_desc">📅 Date (Newest)</SelectItem>
+                <SelectItem value="date_asc">📅 Date (Oldest)</SelectItem>
+                <SelectItem value="rev_desc">💰 Revenue (High → Low)</SelectItem>
+                <SelectItem value="rev_asc">💰 Revenue (Low → High)</SelectItem>
+                <SelectItem value="roas_desc">📈 ROAS (High → Low)</SelectItem>
+                <SelectItem value="roas_asc">📈 ROAS (Low → High)</SelectItem>
+                <SelectItem value="cost_desc">💸 Cost (High → Low)</SelectItem>
+                <SelectItem value="cost_asc">💸 Cost (Low → High)</SelectItem>
               </SelectContent>
             </Select>
 
@@ -790,7 +831,7 @@ export default function Campaigns() {
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => <CampaignCardSkeleton key={i} />)}
         </div>
-      ) : !campaigns || campaigns.length === 0 ? (
+      ) : !sortedCampaigns || sortedCampaigns.length === 0 ? (
         <Card className="p-12 text-center">
            <Megaphone className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
            <h3 className="text-lg font-medium">No campaigns yet</h3>
@@ -798,7 +839,7 @@ export default function Campaigns() {
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {campaigns.map((campaign) => (
+          {sortedCampaigns.map((campaign) => (
             <CampaignCard
               key={campaign.id}
               campaign={campaign}
