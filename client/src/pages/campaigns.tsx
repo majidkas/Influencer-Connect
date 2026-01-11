@@ -117,10 +117,11 @@ function CampaignCard({ campaign, activeTab, onEdit, onDelete }: { campaign: Cam
   
   // DONNÉES DYNAMIQUES
   const revenue = isUtm ? campaign.revenueUtm : campaign.revenuePromo;
-  const orders = isUtm ? campaign.ordersUtm : campaign.ordersPromo; // Commandes attribuées selon la méthode choisie
+  // ICI : On revient à la logique qui fonctionnait. "Orders" s'adapte à l'onglet.
+  const orders = isUtm ? campaign.ordersUtm : campaign.ordersPromo; 
   
-  // LOGIQUE STRICTE : Le badge "Code Promo" doit TOUJOURS montrer l'utilisation du code, peu importe l'onglet.
-  const realPromoUsage = campaign.ordersPromo; 
+  // ICI : Le compteur à côté du tag s'adapte aussi à l'onglet (cohérence visuelle)
+  const promoCountDisplay = isUtm ? campaign.ordersUtm : campaign.ordersPromo;
 
   const commissionCost = revenue * (campaign.commissionPercent / 100);
   const totalCost = campaign.fixedCost + commissionCost;
@@ -165,8 +166,8 @@ function CampaignCard({ campaign, activeTab, onEdit, onDelete }: { campaign: Cam
                 <Tag className="h-3 w-3" />{campaign.promoCode}
               </div>
             </div>
-            {/* CORRECTION ICI : On affiche toujours le vrai nombre d'utilisations du code */}
-            <span className="font-medium text-muted-foreground">{realPromoUsage} {t("camp.used")}</span>
+            {/* RETOUR ARRIERE : On affiche le compteur cohérent avec l'onglet */}
+            <span className="font-medium text-muted-foreground">{promoCountDisplay} {t("camp.used")}</span>
           </div>
         )}
 
