@@ -122,23 +122,19 @@ export async function registerRoutes(server: Server, app: Express) {
     } catch (e) { res.json({ totalInfluencers: 0, activeCampaigns: 0, totalRevenue: 0, totalCosts: 0, averageRoas: 0 }); }
   });
 
-  // --- STATS CAMPAGNES (LOGIQUE INTERSECTION ID + FALLBACK) ---
+  // --- STATS CAMPAGNES (LOGIQUE HYBRIDE : PIXEL + WEBHOOK) ---
   router.get("/api/campaigns/stats", async (req: Request, res: Response) => {
     try {
       const { from, to } = req.query;
       const startDate = from ? new Date(from as string) : new Date(0);
       const endDate = to ? new Date(to as string) : new Date();
 
-      console.log(`DEBUG: Fetching stats from ${startDate.toISOString()} to ${endDate.toISOString()}`);
-
       const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
       const allInfluencers = await db.select().from(influencers);
       
-      // Récupération des données
       const allEvents = await db.select().from(events).where(and(gte(events.createdAt, startDate), lte(events.createdAt, endDate)));
       const allOrders = await db.select().from(orders).where(and(gte(orders.createdAt, startDate), lte(orders.createdAt, endDate)));
 
-      // Shopify Info
       const [shopData] = await db.select().from(shops).limit(1);
       let shopifyProducts: any[] = [];
       let currency = "EUR";
@@ -170,30 +166,36 @@ export async function registerRoutes(server: Server, app: Express) {
         if (campaign.promoCode) {
           const cleanCode = campaign.promoCode.trim().toLowerCase();
           
-          // Commandes globales avec ce code
+          // Commandes globales avec ce code (provenant des Webhooks)
           const globalPromoOrders = allOrders.filter(o => o.promoCode && o.promoCode.trim().toLowerCase() === cleanCode);
 
           // On vérifie pour CHAQUE vente UTM si elle correspond à une commande avec code
           ordersPromoOnLink = purchaseEvents.filter(event => {
             const payload = event.payload as any;
             
-            // A. Essai par ID de commande (Le plus fiable)
-            // Le payload du pixel contient souvent l'ID dans data.checkout.order.id
+            // METHODE A: Vérification directe dans le Pixel (La plus fiable si le pixel renvoie l'info)
+            // On regarde si "discountApplications" contient notre code
+            const pixelDiscounts = payload?.data?.checkout?.discountApplications || [];
+            if (Array.isArray(pixelDiscounts)) {
+              const hasCode = pixelDiscounts.some((d: any) => d.title && d.title.toLowerCase() === cleanCode);
+              if (hasCode) return true; // C'est gagné !
+            }
+
+            // METHODE B: Correspondance avec la table Orders (Rattrapage si le Pixel est muet)
+            // B1. Par ID de commande
             const eventOrderId = payload?.data?.checkout?.order?.id || payload?.id; 
-            
             if (eventOrderId) {
               const match = globalPromoOrders.find(o => o.shopifyOrderId.toString().endsWith(eventOrderId.toString()));
               if (match) return true;
             }
 
-            // B. Fallback : Correspondance Temps (sans prix strict pour éviter les bugs de taxes)
-            // Si une commande avec ce code a eu lieu à +/- 30 min du clic, on compte.
-            const match = globalPromoOrders.find(order => {
+            // B2. Par Temps (Tolérance 30 min)
+            const matchTime = globalPromoOrders.find(order => {
               const timeDiff = Math.abs(new Date(order.createdAt).getTime() - new Date(event.createdAt).getTime());
-              return timeDiff < 30 * 60 * 1000; // 30 minutes
+              return timeDiff < 30 * 60 * 1000;
             });
             
-            return !!match;
+            return !!matchTime;
           }).length;
         }
         
@@ -204,7 +206,7 @@ export async function registerRoutes(server: Server, app: Express) {
           ...campaign,
           influencer: influencer || null,
           clicks, addToCarts, ordersUtm, revenueUtm, 
-          ordersPromo: ordersPromoOnLink, // C'est ce chiffre qui s'affichera à côté du badge
+          ordersPromo: ordersPromoOnLink, // C'est ce chiffre qui s'affiche
           revenuePromo: 0, 
           fixedCost, commissionPercent,
           productImage: (() => {
@@ -231,7 +233,7 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
-  // --- STATS INFLUENCERS (Avec filtre date) ---
+  // --- STATS INFLUENCERS ---
   router.get("/api/influencers/stats", async (req: Request, res: Response) => {
     try {
       const { from, to } = req.query;
@@ -241,6 +243,7 @@ export async function registerRoutes(server: Server, app: Express) {
       const allInfluencers = await db.select().from(influencers);
       const allSocialAccounts = await db.select().from(socialAccounts);
       const allCampaigns = await db.select().from(campaigns);
+      
       const allEvents = await db.select().from(events).where(and(gte(events.createdAt, startDate), lte(events.createdAt, endDate)));
       const allOrders = await db.select().from(orders).where(and(gte(orders.createdAt, startDate), lte(orders.createdAt, endDate)));
 
@@ -253,7 +256,6 @@ export async function registerRoutes(server: Server, app: Express) {
           const campaignEvents = allEvents.filter(e => e.utmCampaign === campaign.slugUtm);
           const rev1 = campaignEvents.filter(e => e.eventType === 'purchase').reduce((acc, curr) => acc + (curr.revenue || 0), 0);
           
-          // Pour les stats globales influenceur, on reste "gentil" (on prend le max)
           const code = campaign.promoCode ? campaign.promoCode.trim().toLowerCase() : null;
           const rev2 = code ? allOrders.filter(o => o.promoCode && o.promoCode.trim().toLowerCase() === code).reduce((acc, curr) => acc + (curr.totalPrice || 0), 0) : 0;
           
@@ -272,11 +274,11 @@ export async function registerRoutes(server: Server, app: Express) {
         const roas = totalCost > 0 ? totalRevenue / totalCost : 0;
         
         let calculatedRating = 0;
-        if (influencerCampaigns.length === 0) calculatedRating = 0; 
-        else if (roas < 0) calculatedRating = 1; 
-        else if (roas >= 0 && roas < 2) calculatedRating = 1; 
-        else if (roas >= 2 && roas < 4) calculatedRating = 2; 
-        else calculatedRating = 3; 
+        if (influencerCampaigns.length === 0) { calculatedRating = 0; } 
+        else if (roas < 0) { calculatedRating = 1; } 
+        else if (roas >= 0 && roas < 2) { calculatedRating = 1; } 
+        else if (roas >= 2 && roas < 4) { calculatedRating = 2; } 
+        else { calculatedRating = 3; }
         
         return { ...influencer, socialAccounts: allSocialAccounts.filter(s => s.influencerId === influencer.id), totalCampaigns: influencerCampaigns.length, activeCampaigns: activeCampaigns.length, totalCost, totalRevenue, totalOrders, roas, calculatedRating };
       });
@@ -284,7 +286,7 @@ export async function registerRoutes(server: Server, app: Express) {
     } catch (error) { res.status(500).json({ error: "Failed to fetch influencers stats" }); }
   });
 
-  // --- STATS CODES PROMO (Page dédiée) ---
+  // --- STATS CODES PROMO ---
   router.get("/api/discounts/stats", async (req: Request, res: Response) => {
     try {
       const { from, to } = req.query;
@@ -292,7 +294,11 @@ export async function registerRoutes(server: Server, app: Express) {
       const endDate = to ? new Date(to as string) : new Date();
 
       const promoOrders = await db.select().from(orders)
-        .where(and(sql`${orders.promoCode} IS NOT NULL`, gte(orders.createdAt, startDate), lte(orders.createdAt, endDate)));
+        .where(and(
+          sql`${orders.promoCode} IS NOT NULL`,
+          gte(orders.createdAt, startDate), 
+          lte(orders.createdAt, endDate)
+        ));
 
       const statsMap = new Map<string, { code: string, count: number, sales: number }>();
 
@@ -300,6 +306,7 @@ export async function registerRoutes(server: Server, app: Express) {
         if (!order.promoCode) return;
         const code = order.promoCode.toUpperCase().trim();
         const current = statsMap.get(code) || { code, count: 0, sales: 0 };
+        
         current.count += 1;
         current.sales += (order.totalPrice || 0);
         statsMap.set(code, current);
@@ -307,10 +314,13 @@ export async function registerRoutes(server: Server, app: Express) {
 
       const result = Array.from(statsMap.values()).sort((a, b) => b.sales - a.sales);
       res.json(result);
-    } catch (e) { res.status(500).json({ error: "Failed to fetch discount stats" }); }
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: "Failed to fetch discount stats" });
+    }
   });
 
-  // --- CRUD (Standard) ---
+  // --- CRUD ROUTES (Sans changement) ---
   router.get("/api/campaigns", async (req: Request, res: Response) => {
       const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
       const allInfluencers = await db.select().from(influencers);
@@ -407,7 +417,7 @@ export async function registerRoutes(server: Server, app: Express) {
       }
   });
 
-  // --- HELPERS (Inchangés) ---
+  // --- HELPERS SHOPIFY ---
   router.get("/api/shopify/discount-codes", async (req: Request, res: Response) => {
       const shop = req.query.shop as string;
       if (!shop) return res.json({ error: "Missing shop parameter", codes: [] });
