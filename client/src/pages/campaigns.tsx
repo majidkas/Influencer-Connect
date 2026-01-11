@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react"; // CORRECTION: useEffect ajouté ici
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -35,8 +35,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Plus, Pencil, Trash2, Megaphone, Tag, Percent, Copy, Check, 
-  Loader2, Filter, ShoppingBag, Home, MousePointer, TrendingUp,
-  ArrowDownWideNarrow, ArrowUpNarrowWide, Calendar
+  Loader2, Filter, ShoppingBag, Home, MousePointer, TrendingUp
 } from "lucide-react";
 import type { CampaignWithInfluencer, Influencer } from "@shared/schema";
 
@@ -55,7 +54,7 @@ interface CampaignStats extends CampaignWithInfluencer {
   productTitle?: string | null;
   currency?: string;
   promoCodeUsage?: number;
-  createdAt?: string | Date; // Important pour le tri par date
+  createdAt?: string | Date;
 }
 
 const campaignFormSchema = z.object({
@@ -357,6 +356,7 @@ function SponsoredLinkCopier({
     if (targetType === "homepage") {
       return `https://${shopDomain}?utm_campaign=${slugUtm}`;
     }
+    // Correction URL
     if (productUrl && slugUtm) {
       const separator = productUrl.includes("?") ? "&" : "?";
       return `${productUrl}${separator}utm_campaign=${slugUtm}`;
@@ -502,6 +502,7 @@ function CampaignFormDialog({
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             
+            {/* Influencer Select */}
             <FormField
               control={form.control}
               name="influencerId"
