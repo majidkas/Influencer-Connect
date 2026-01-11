@@ -37,7 +37,7 @@ import {
   Plus, Pencil, Trash2, X, Megaphone, DollarSign, TrendingUp, 
   MessageCircle, Mail, ShoppingBag, Upload, Star 
 } from "lucide-react";
-import type { InfluencerWithSocials } from "@shared/schema";
+import type { InfluencerWithSocials, Settings } from "@shared/schema";
 
 // --- CONSTANTS ---
 const COUNTRY_CODES = [
@@ -110,10 +110,12 @@ function InfluencerCard({
   influencer,
   onEdit,
   onDelete,
+  settings,
 }: {
   influencer: InfluencerWithStats;
   onEdit: () => void;
   onDelete: () => void;
+  settings?: Settings;
 }) {
   const gender = (influencer as any).gender;
   const bgColor = gender === "female" 
@@ -129,22 +131,25 @@ function InfluencerCard({
     }).format(amount);
   };
 
-  // --- LOGIQUE DE NOTATION 3 ETOILES (Active) ---
+  // --- LOGIQUE DE NOTATION 3 ETOILES (DYNAMIQUE) ---
   const renderActiveRating = (roas: number) => {
-    // Cas spécial "Loss" (si ROAS < 0, bien que rare techniquement)
+    // Récupération des seuils (ou valeurs par défaut)
+    const t2 = settings?.minRoas2Stars ?? 2.0;
+    const t3 = settings?.minRoas3Stars ?? 4.0;
+    const lossText = settings?.lossText || "⚠️ Loss !";
+
     if (roas < 0) {
-      return <span className="text-red-600 font-bold text-xs flex items-center gap-1">⚠️ Loss !</span>;
+      return <span className="text-red-600 font-bold text-xs flex items-center gap-1">{lossText}</span>;
     }
 
     let starCount = 0;
-    // 0 à 1.99 -> 1 étoile
-    if (roas >= 0 && roas < 2) starCount = 1;
-    // 2 à 3.99 -> 2 étoiles
-    else if (roas >= 2 && roas < 4) starCount = 2;
-    // > 4 -> 3 étoiles
-    else if (roas >= 4) starCount = 3;
+    // 1 étoile : de 0 à t2
+    if (roas >= 0 && roas < t2) starCount = 1;
+    // 2 étoiles : de t2 à t3
+    else if (roas >= t2 && roas < t3) starCount = 2;
+    // 3 étoiles : >= t3
+    else if (roas >= t3) starCount = 3;
 
-    // Rendu des 3 étoiles (pleines ou vides)
     return (
       <div className="flex gap-0.5">
         {[1, 2, 3].map((i) => (
@@ -179,7 +184,6 @@ function InfluencerCard({
               {influencer.name}
             </h3>
             
-            {/* WhatsApp Button (Nouveau Design) */}
             {influencer.whatsapp && (
               <Button 
                 size="sm" 
@@ -210,9 +214,7 @@ function InfluencerCard({
           )}
           
           <div className="mt-2 flex items-center gap-2">
-            {/* LOGIQUE D'AFFICHAGE DU RATING */}
             {influencer.totalCampaigns === 0 ? (
-              // CAS: NOUVEL INFLUENCEUR (0 campagne)
               <>
                  <div className="flex gap-0.5">
                    {[1, 2, 3].map((i) => (
@@ -222,7 +224,6 @@ function InfluencerCard({
                  <span className="text-xs text-muted-foreground ml-1">(New)</span>
               </>
             ) : (
-              // CAS: INFLUENCEUR ACTIF
               <>
                 {renderActiveRating(influencer.roas)}
                 <span className="text-xs text-muted-foreground ml-1">
@@ -247,7 +248,6 @@ function InfluencerCard({
           </div>
         )}
         
-        {/* Stats Grid */}
         <div className="grid grid-cols-2 gap-y-2 gap-x-4 pt-3 border-t">
           <div className="flex items-center gap-2 text-sm">
             <Megaphone className="h-4 w-4 text-muted-foreground" />
@@ -298,6 +298,10 @@ function InfluencerCard({
     </Card>
   );
 }
+
+// ... (SocialAccountForm et InfluencerFormDialog restent IDENTIQUES, je les masque pour la clarté)
+// ... Assurez-vous de garder tout le reste du fichier (les modals, form, etc) tel quel. 
+// Je ne remets ici que la partie principale "Influencers" pour montrer l'intégration des settings.
 
 function SocialAccountForm({ onAdd }: { onAdd: (data: SocialAccountFormData) => void; }) {
   const form = useForm<SocialAccountFormData>({
@@ -712,6 +716,11 @@ export default function Influencers() {
     queryKey: ["/api/influencers/stats"],
   });
 
+  // RECUPERATION DES SETTINGS
+  const { data: settings } = useQuery<Settings>({
+    queryKey: ["/api/settings"],
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
       await apiRequest("DELETE", `/api/influencers/${id}`);
@@ -782,6 +791,7 @@ export default function Influencers() {
             <InfluencerCard
               key={influencer.id}
               influencer={influencer}
+              settings={settings} // PASSAGE DES SETTINGS A LA CARTE
               onEdit={() => handleEdit(influencer)}
               onDelete={() => handleDelete(influencer.id)}
             />
