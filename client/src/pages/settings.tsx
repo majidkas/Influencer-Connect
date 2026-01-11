@@ -10,10 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Settings as SettingsIcon, Languages, Star, Loader2, ArrowRight } from "lucide-react";
+import { Settings as SettingsIcon, Languages, Star, Loader2, ArrowRight, AlertTriangle } from "lucide-react";
 import type { Settings } from "@shared/schema";
 
-// Schema mis à jour avec les 5 valeurs de seuil
+// --- SCHEMA DE VALIDATION AVEC LOGIQUE ANTI-CHEVAUCHEMENT ---
 const settingsSchema = z.object({
   language: z.enum(["en", "fr"]),
   lossText: z.string().min(1, "Required"),
@@ -25,6 +25,42 @@ const settingsSchema = z.object({
   star2Max: z.coerce.number().min(0),
   
   star3Min: z.coerce.number().min(0),
+}).superRefine((data, ctx) => {
+  // Règle 1: Min < Max pour l'étoile 1
+  if (data.star1Max <= data.star1Min) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Max must be greater than Min",
+      path: ["star1Max"],
+    });
+  }
+
+  // Règle 2: L'étoile 2 doit commencer APRES la fin de l'étoile 1
+  if (data.star2Min < data.star1Max) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Overlap! Must be >= Star 1 Max (${data.star1Max})`,
+      path: ["star2Min"],
+    });
+  }
+
+  // Règle 3: Min < Max pour l'étoile 2
+  if (data.star2Max <= data.star2Min) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Max must be greater than Min",
+      path: ["star2Max"],
+    });
+  }
+
+  // Règle 4: L'étoile 3 doit commencer APRES la fin de l'étoile 2
+  if (data.star3Min < data.star2Max) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Overlap! Must be >= Star 2 Max (${data.star2Max})`,
+      path: ["star3Min"],
+    });
+  }
 });
 
 type SettingsFormData = z.infer<typeof settingsSchema>;
@@ -54,10 +90,10 @@ export default function SettingsPage() {
       star1Min: 0, star1Max: 1.99,
       star2Min: 2, star2Max: 2.99,
       star3Min: 3
-    }
+    },
+    mode: "onChange" // Active la validation en temps réel
   });
 
-  // Mise à jour du formulaire quand les données arrivent
   useEffect(() => {
     if (settings) {
       form.reset({
@@ -154,14 +190,16 @@ export default function SettingsPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Influencer Rating Logic</CardTitle>
-                <CardDescription>Define ROAS thresholds manually.</CardDescription>
+                <CardDescription>
+                  Define ROAS thresholds manually. Ranges must not overlap.
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-8">
                 
                 {/* 1. NEGATIVE ROAS */}
                 <div className="space-y-3 p-4 bg-red-50/50 border border-red-100 rounded-lg">
                   <h3 className="font-medium text-red-800 flex items-center gap-2 text-sm">
-                    ⚠️ Negative ROAS (ROAS {"<"} 0)
+                    <AlertTriangle className="h-4 w-4" /> Negative ROAS (ROAS {"<"} 0)
                   </h3>
                   <FormField
                     control={form.control}
@@ -188,7 +226,7 @@ export default function SettingsPage() {
                     </div>
                     1 Star Range
                   </h3>
-                  <div className="flex items-center gap-4">
+                  <div className="flex flex-col md:flex-row md:items-start gap-4">
                     <FormField
                       control={form.control}
                       name="star1Min"
@@ -196,10 +234,11 @@ export default function SettingsPage() {
                         <FormItem className="flex-1">
                           <FormLabel className="text-xs">Min ROAS</FormLabel>
                           <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
+                          <FormMessage />
                         </FormItem>
                       )}
                     />
-                    <ArrowRight className="h-4 w-4 text-muted-foreground mt-6" />
+                    <ArrowRight className="h-4 w-4 text-muted-foreground mt-8 hidden md:block" />
                     <FormField
                       control={form.control}
                       name="star1Max"
@@ -207,6 +246,7 @@ export default function SettingsPage() {
                         <FormItem className="flex-1">
                           <FormLabel className="text-xs">Max ROAS</FormLabel>
                           <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
+                          <FormMessage />
                         </FormItem>
                       )}
                     />
@@ -223,7 +263,7 @@ export default function SettingsPage() {
                     </div>
                     2 Stars Range
                   </h3>
-                  <div className="flex items-center gap-4">
+                  <div className="flex flex-col md:flex-row md:items-start gap-4">
                     <FormField
                       control={form.control}
                       name="star2Min"
@@ -231,10 +271,11 @@ export default function SettingsPage() {
                         <FormItem className="flex-1">
                           <FormLabel className="text-xs">Min ROAS</FormLabel>
                           <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
+                          <FormMessage />
                         </FormItem>
                       )}
                     />
-                    <ArrowRight className="h-4 w-4 text-muted-foreground mt-6" />
+                    <ArrowRight className="h-4 w-4 text-muted-foreground mt-8 hidden md:block" />
                     <FormField
                       control={form.control}
                       name="star2Max"
@@ -242,6 +283,7 @@ export default function SettingsPage() {
                         <FormItem className="flex-1">
                           <FormLabel className="text-xs">Max ROAS</FormLabel>
                           <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
+                          <FormMessage />
                         </FormItem>
                       )}
                     />
@@ -259,16 +301,20 @@ export default function SettingsPage() {
                     3 Stars Threshold
                   </h3>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground mt-2">ROAS Greater than or equal to:</span>
-                    <FormField
-                      control={form.control}
-                      name="star3Min"
-                      render={({ field }) => (
-                        <FormItem className="w-32">
-                          <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
-                        </FormItem>
-                      )}
-                    />
+                    <div className="w-full md:w-1/3">
+                      <FormField
+                        control={form.control}
+                        name="star3Min"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-xs">Min ROAS</FormLabel>
+                            <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                    <span className="text-xs text-muted-foreground mt-6 ml-2">(and above)</span>
                   </div>
                 </div>
 
