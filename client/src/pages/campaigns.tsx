@@ -223,7 +223,7 @@ function CampaignCard({
           {renderTarget()}
         </div>
 
-        {/* PROMO CODE + USED (NOUVEAU DESIGN LIGNE UNIQUE) */}
+        {/* PROMO CODE + USED */}
         {campaign.promoCode && (
           <div className="flex items-center justify-between text-xs mt-3">
             <div className="flex items-center gap-2">
@@ -239,10 +239,9 @@ function CampaignCard({
           </div>
         )}
 
-        {/* STATS GRID REORGANISÉE */}
+        {/* STATS GRID */}
         <div className="grid grid-cols-2 gap-y-3 gap-x-2 pt-3 border-t mt-2">
           
-          {/* LIGNE 1 : CLICKS | CONV RATE */}
           <div className="flex flex-col">
             <span className="text-[10px] text-muted-foreground">Clicks:</span>
             <span className="font-medium">{clicksDisplay}</span>
@@ -252,7 +251,6 @@ function CampaignCard({
             <span className="font-medium">{convRate.toFixed(1)}%</span>
           </div>
 
-          {/* LIGNE 2 : ORDERS | ROAS */}
           <div className="flex flex-col">
             <span className="text-[10px] text-muted-foreground">Orders:</span>
             <span className="font-medium">{orders}</span>
@@ -264,7 +262,6 @@ function CampaignCard({
             </span>
           </div>
 
-          {/* LIGNE 3 : TOTAL COST | COST (FIXED/VAR) */}
           <div className="flex flex-col">
             <span className="text-[10px] text-muted-foreground">Total Cost:</span>
             <span className="font-medium">{formatCurrency(totalCost, campaign.currency)}</span>
@@ -278,7 +275,6 @@ function CampaignCard({
 
         </div>
 
-        {/* REVENUE SECTION (BAS) */}
         <div className="flex justify-between items-center mt-3 pt-3 border-t border-dashed">
            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Revenue</span>
            <span className="font-bold text-lg text-green-600">{formatCurrency(revenue, campaign.currency)}</span>
@@ -363,6 +359,7 @@ function SponsoredLinkCopier({
     if (targetType === "homepage") {
       return `https://${shopDomain}?utm_campaign=${slugUtm}`;
     }
+    // Correction : on vérifie juste que l'URL existe, peu importe si elle a été construite manuellement ou non
     if (productUrl && slugUtm) {
       const separator = productUrl.includes("?") ? "&" : "?";
       return `${productUrl}${separator}utm_campaign=${slugUtm}`;
@@ -605,11 +602,19 @@ function CampaignFormDialog({
                         </FormControl>
                         <SelectContent>
                           <SelectItem value="none">No Product</SelectItem>
-                          {productsData?.products?.map((p) => (
-                            <SelectItem key={p.id} value={p.url}>
-                              <ProductSelectItem product={p} />
-                            </SelectItem>
-                          ))}
+                          {productsData?.products?.map((p) => {
+                            // CORRECTIF: Si l'API renvoie une URL vide (null/"" comme souvent sur les dev stores), 
+                            // on reconstruit l'URL manuellement avec le handle.
+                            const robustUrl = p.url && p.url.length > 0 
+                              ? p.url 
+                              : `https://${shopDomain}/products/${p.handle}`;
+                              
+                            return (
+                              <SelectItem key={p.id} value={robustUrl}>
+                                <ProductSelectItem product={p} />
+                              </SelectItem>
+                            );
+                          })}
                         </SelectContent>
                       </Select>
                     )}
