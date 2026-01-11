@@ -75,13 +75,13 @@ export const orders = pgTable("orders", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// --- TABLE SETTINGS ---
+// --- NOUVELLE TABLE SETTINGS ---
 export const settings = pgTable("settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  language: text("language").default("fr"), 
-  minRoas2Stars: real("min_roas_2_stars").default(2.0),
-  minRoas3Stars: real("min_roas_3_stars").default(4.0), 
-  lossText: text("loss_text").default("⚠️ Loss !"),
+  language: text("language").default("fr"), // Langue par défaut
+  minRoas2Stars: real("min_roas_2_stars").default(2.0), // Seuil pour 2 étoiles
+  minRoas3Stars: real("min_roas_3_stars").default(4.0), // Seuil pour 3 étoiles
+  lossText: text("loss_text").default("⚠️ Loss !"), // Texte si < 0
 });
 
 // Relations
@@ -110,6 +110,7 @@ export const insertInfluencerSchema = createInsertSchema(influencers);
 export const insertSocialAccountSchema = createInsertSchema(socialAccounts);
 export const insertCampaignSchema = createInsertSchema(campaigns);
 export const insertEventSchema = createInsertSchema(events);
+// Export settings schema
 export const insertSettingsSchema = createInsertSchema(settings);
 
 // Types exportés
@@ -123,6 +124,7 @@ export type Campaign = typeof campaigns.$inferSelect;
 export type InsertCampaign = z.infer<typeof insertCampaignSchema>;
 export type Event = typeof events.$inferSelect;
 export type InsertEvent = z.infer<typeof insertEventSchema>;
+// Export settings types
 export type Settings = typeof settings.$inferSelect;
 export type InsertSettings = z.infer<typeof insertSettingsSchema>;
 
