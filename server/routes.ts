@@ -138,17 +138,19 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
-  // --- STATS CAMPAGNES - AVEC FILTRE DATE ---
+  // --- STATS CAMPAGNES - AVEC FILTRE DATE ET LOGIQUE D'INTERSECTION ---
   router.get("/api/campaigns/stats", async (req: Request, res: Response) => {
     try {
       const { from, to } = req.query;
       const startDate = from ? new Date(from as string) : new Date(0);
       const endDate = to ? new Date(to as string) : new Date();
 
+      console.log(`DEBUG: Fetching stats from ${startDate.toISOString()} to ${endDate.toISOString()}`);
+
       const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
       const allInfluencers = await db.select().from(influencers);
       
-      // Récupération des Events et Commandes filtrés par la période
+      // 1. Récupération des Events (Source UTM) et Commandes (Source Code Promo)
       const allEvents = await db.select().from(events).where(and(gte(events.createdAt, startDate), lte(events.createdAt, endDate)));
       const allOrders = await db.select().from(orders).where(and(gte(orders.createdAt, startDate), lte(orders.createdAt, endDate)));
 
@@ -169,28 +171,62 @@ export async function registerRoutes(server: Server, app: Express) {
       let stats = allCampaigns.map(campaign => {
         const influencer = allInfluencers.find(inf => inf.id === campaign.influencerId);
         
-        // Stats UTM
+        // 2. Filtrage des Events pour cette campagne (Source UTM)
         const campaignEvents = allEvents.filter(e => e.utmCampaign === campaign.slugUtm);
         const clicks = campaignEvents.filter(e => e.eventType === 'page_view' || e.eventType === 'product_view').length;
         const addToCarts = campaignEvents.filter(e => e.eventType === 'add_to_cart').length;
-        const purchaseEvents = campaignEvents.filter(e => e.eventType === 'purchase');
         
+        // Ventes UTM (Peu importe le code promo) -> C'est le chiffre "Commandes"
+        const purchaseEvents = campaignEvents.filter(e => e.eventType === 'purchase');
         const ordersUtm = purchaseEvents.length;
         const revenueUtm = purchaseEvents.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
         
-        // Stats Promo (Filtrées aussi par date via allOrders)
-        const campaignPromoCode = campaign.promoCode ? campaign.promoCode.toLowerCase().trim() : null;
-        const promoOrdersList = campaignPromoCode ? allOrders.filter(o => o.promoCode && o.promoCode.toLowerCase() === campaignPromoCode) : [];
-        const ordersPromo = promoOrdersList.length;
-        const revenuePromo = promoOrdersList.reduce((acc, curr) => acc + (curr.totalPrice || 0), 0);
+        // 3. Calcul de l'Intersection (Scénario : Lien UTM Cliqué + Code Promo Utilisé)
+        // C'est le chiffre "Utilisé" pour le badge
+        let ordersPromoOnLink = 0;
+        let ordersPromoGlobal = 0; // Pour info interne si besoin
+
+        if (campaign.promoCode) {
+          const cleanCode = campaign.promoCode.trim().toLowerCase();
+          
+          // A. Ventes Globales avec ce code (Source Shopify uniquement)
+          const globalPromoOrders = allOrders.filter(o => o.promoCode && o.promoCode.trim().toLowerCase() === cleanCode);
+          ordersPromoGlobal = globalPromoOrders.length;
+
+          // B. Intersection : On cherche parmi les achats UTM (purchaseEvents) ceux qui ont aussi le code
+          // Comme 'events' n'a pas toujours le code promo explicite, on tente un "Matching" avec 'allOrders'
+          // Critère : Même prix (à 0.1 près) et date proche (+/- 5 min)
+          
+          ordersPromoOnLink = purchaseEvents.filter(event => {
+            // On cherche une commande correspondante dans la liste des commandes avec ce code
+            const match = globalPromoOrders.find(order => {
+              const priceDiff = Math.abs((order.totalPrice || 0) - (event.revenue || 0));
+              const timeDiff = Math.abs(new Date(order.createdAt).getTime() - new Date(event.createdAt).getTime());
+              
+              // Correspondance si prix identique et temps < 5 minutes
+              return priceDiff < 0.1 && timeDiff < 5 * 60 * 1000;
+            });
+            return !!match; // Si match trouvé, c'est une vente UTM + Code
+          }).length;
+        }
         
         const fixedCost = campaign.costFixed || 0;
         const commissionPercent = campaign.commissionPercent || 0;
         
+        // Note: ordersPromo renvoyé ici sera "ordersPromoOnLink" pour coller à la demande d'affichage "Utilisé sur la carte"
+        // Si vous vouliez l'affichage global, on aurait mis ordersPromoGlobal.
+        
         return {
           ...campaign,
           influencer: influencer || null,
-          clicks, addToCarts, ordersUtm, revenueUtm, ordersPromo, revenuePromo, fixedCost, commissionPercent,
+          clicks, 
+          addToCarts, 
+          ordersUtm,      // Commandes totales via lien
+          revenueUtm,     // Revenu total via lien
+          ordersPromo: ordersPromoOnLink, // ICI : On renvoie l'intersection pour l'affichage "Utilisé"
+          revenuePromo: 0, // Non utilisé dans l'affichage principal UTM
+          fixedCost, 
+          commissionPercent,
           productImage: (() => {
             if (campaign.targetType === 'homepage') return null;
             if (!campaign.productUrl) return null;
@@ -209,7 +245,10 @@ export async function registerRoutes(server: Server, app: Express) {
         };
       });
       res.json(stats);
-    } catch (error) { res.status(500).json({ error: "Failed to fetch stats" }); }
+    } catch (error) { 
+      console.error("API Error:", error);
+      res.status(500).json({ error: "Failed to fetch stats" }); 
+    }
   });
 
   // --- STATS INFLUENCERS - AVEC FILTRE DATE ---
@@ -234,8 +273,10 @@ export async function registerRoutes(server: Server, app: Express) {
         influencerCampaigns.forEach(campaign => {
           const campaignEvents = allEvents.filter(e => e.utmCampaign === campaign.slugUtm);
           const rev1 = campaignEvents.filter(e => e.eventType === 'purchase').reduce((acc, curr) => acc + (curr.revenue || 0), 0);
-          const code = campaign.promoCode ? campaign.promoCode.toLowerCase() : null;
-          const rev2 = code ? allOrders.filter(o => o.promoCode && o.promoCode.toLowerCase() === code).reduce((acc, curr) => acc + (curr.totalPrice || 0), 0) : 0;
+          
+          // Pour les influenceurs, on garde une logique "Max" (soit lien, soit code) pour être généreux sur leur performance globale
+          const code = campaign.promoCode ? campaign.promoCode.trim().toLowerCase() : null;
+          const rev2 = code ? allOrders.filter(o => o.promoCode && o.promoCode.trim().toLowerCase() === code).reduce((acc, curr) => acc + (curr.totalPrice || 0), 0) : 0;
           
           const bestRevenue = Math.max(rev1, rev2);
           const fixedCost = campaign.costFixed || 0;
@@ -245,13 +286,12 @@ export async function registerRoutes(server: Server, app: Express) {
           totalCost += fixedCost + commissionCost;
           
           const orders1 = campaignEvents.filter(e => e.eventType === 'purchase').length;
-          const orders2 = code ? allOrders.filter(o => o.promoCode === code).length : 0;
+          const orders2 = code ? allOrders.filter(o => o.promoCode && o.promoCode.trim().toLowerCase() === code).length : 0;
           totalOrders += Math.max(orders1, orders2);
         });
         
         const roas = totalCost > 0 ? totalRevenue / totalCost : 0;
         
-        // Calcul du rating (sera géré dynamiquement par le front mais le back envoie une base)
         let calculatedRating = 0;
         if (influencerCampaigns.length === 0) { calculatedRating = 0; } 
         else if (roas < 0) { calculatedRating = 1; } 
@@ -272,7 +312,6 @@ export async function registerRoutes(server: Server, app: Express) {
       const startDate = from ? new Date(from as string) : new Date(0);
       const endDate = to ? new Date(to as string) : new Date();
 
-      // On récupère toutes les commandes avec un code promo sur la période
       const promoOrders = await db.select().from(orders)
         .where(and(
           sql`${orders.promoCode} IS NOT NULL`,
@@ -280,12 +319,11 @@ export async function registerRoutes(server: Server, app: Express) {
           lte(orders.createdAt, endDate)
         ));
 
-      // Agrégation manuelle des données
       const statsMap = new Map<string, { code: string, count: number, sales: number }>();
 
       promoOrders.forEach(order => {
         if (!order.promoCode) return;
-        const code = order.promoCode.toUpperCase();
+        const code = order.promoCode.toUpperCase().trim();
         const current = statsMap.get(code) || { code, count: 0, sales: 0 };
         
         current.count += 1;
@@ -301,7 +339,7 @@ export async function registerRoutes(server: Server, app: Express) {
     }
   });
 
-  // --- CRUD CAMPAGNES (Standard) ---
+  // --- CRUD ROUTES (Sans changement) ---
   router.get("/api/campaigns", async (req: Request, res: Response) => {
       const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
       const allInfluencers = await db.select().from(influencers);
@@ -333,7 +371,6 @@ export async function registerRoutes(server: Server, app: Express) {
       try { await db.delete(campaigns).where(eq(campaigns.id, req.params.id)); res.json({ success: true }); } catch (e) { res.status(500).json({ error: "Delete failed" }); }
   });
 
-  // --- CRUD INFLUENCERS (Standard) ---
   router.get("/api/influencers", async (req, res) => {
       try {
         const allInfluencers = await db.select().from(influencers).orderBy(desc(influencers.createdAt));
@@ -369,7 +406,6 @@ export async function registerRoutes(server: Server, app: Express) {
       try { await db.delete(influencers).where(eq(influencers.id, req.params.id)); res.json({ success: true }); } catch (e) { res.status(500).json({ error: "Delete failed" }); }
   });
 
-  // --- TRACKING & WEBHOOKS ---
   router.post("/api/tracking/event", async (req: Request, res: Response) => {
       try { const eventData = req.body; await db.insert(events).values({ eventType: eventData.eventType, sessionId: eventData.sessionId, utmCampaign: eventData.slugUtm || "unknown", revenue: eventData.revenue ? parseFloat(eventData.revenue) : 0, payload: eventData, createdAt: new Date() }); res.json({ success: true }); } catch (error) { res.status(500).json({ error: "Failed" }); }
   });
@@ -392,7 +428,7 @@ export async function registerRoutes(server: Server, app: Express) {
       if (!shop) return res.json({ error: "Missing shop parameter", products: [] });
       const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
       if (!shopData || !shopData.accessToken) return res.json({ error: "Shop not found", products: [] });
-      try { const client = new shopify.clients.Graphql({ session: { shop: shopData.shopDomain, accessToken: shopData.accessToken } as any }); const response = await client.request(` query { products(first: 50) { nodes { id title handle featuredImage { url } onlineStoreUrl } } } `); const products = (response as any).data?.products?.nodes?.map((p: any) => ({ id: p.id, title: p.title, handle: p.handle, imageUrl: p.featuredImage?.url || null, url: p.onlineStoreUrl })) || []; res.json({ products }); } catch (e: any) { res.json({ error: e.message, products: [] }); }
+      try { const client = new shopify.clients.Graphql({ session: { shop: shopData.shopDomain, accessToken: shopData.accessToken } as any }); const response = await client.request(` query { products(first: 50) { nodes { id title handle featuredImage { url } } } } `); const products = (response as any).data?.products?.nodes?.map((p: any) => ({ id: p.id, title: p.title, handle: p.handle, imageUrl: p.featuredImage?.url || null, url: p.onlineStoreUrl })) || []; res.json({ products }); } catch (e: any) { res.json({ error: e.message, products: [] }); }
   });
 
   // --- DEBUG & UTILS ---
@@ -405,36 +441,13 @@ export async function registerRoutes(server: Server, app: Express) {
   });
 
   router.get("/api/webhooks/test", (req, res) => res.json({ status: "OK", time: new Date() }));
-  
-  router.get("/api/debug/shop", async (req, res) => {
-    const shop = req.query.shop as string;
-    const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop));
-    res.json(shopData || { error: "Not found" });
-  });
+  router.get("/api/debug/shop", async (req, res) => { const shop = req.query.shop as string; const [shopData] = await db.select().from(shops).where(eq(shops.shopDomain, shop)); res.json(shopData || { error: "Not found" }); });
 
-  // --- UPLOAD IMAGES ---
   const uploadDir = path.join(process.cwd(), "uploads/influencers/images-profils");
   if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-  const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => cb(null, `${Date.now()}-${Math.random().toString(36).substring(7)}${path.extname(file.originalname)}`),
-  });
-  const upload = multer({
-    storage,
-    limits: { fileSize: 2 * 1024 * 1024 },
-    fileFilter: (req, file, cb) => {
-      const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-      if (allowedTypes.includes(file.mimetype)) cb(null, true);
-      else cb(new Error("Only images are allowed"));
-    },
-  });
-
-  router.post("/api/upload-image", upload.single("image"), (req, res) => {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-    res.json({ success: true, url: `https://api.influtrak.com/uploads/influencers/images-profils/${req.file.filename}` });
-  });
-
+  const storage = multer.diskStorage({ destination: (req, file, cb) => cb(null, uploadDir), filename: (req, file, cb) => cb(null, `${Date.now()}-${Math.random().toString(36).substring(7)}${path.extname(file.originalname)}`), });
+  const upload = multer({ storage, limits: { fileSize: 2 * 1024 * 1024 }, fileFilter: (req, file, cb) => { const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"]; if (allowedTypes.includes(file.mimetype)) cb(null, true); else cb(new Error("Only images are allowed")); }, });
+  router.post("/api/upload-image", upload.single("image"), (req, res) => { if (!req.file) return res.status(400).json({ error: "No file uploaded" }); res.json({ success: true, url: `https://api.influtrak.com/uploads/influencers/images-profils/${req.file.filename}` }); });
   app.use("/uploads", require("express").static(path.join(process.cwd(), "uploads")));
-
   app.use(router);
 }

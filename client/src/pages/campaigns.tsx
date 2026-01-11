@@ -37,7 +37,7 @@ import {
   Loader2, Filter, ShoppingBag, Home 
 } from "lucide-react";
 import { useI18n } from "@/lib/i18nContext";
-import { useDate } from "@/lib/date-context"; // Import du contexte de date
+import { useDate } from "@/lib/date-context";
 import type { CampaignWithInfluencer, Influencer } from "@shared/schema";
 
 // --- TYPES & SCHEMA ---
@@ -47,7 +47,7 @@ interface CampaignStats extends CampaignWithInfluencer {
   ordersUtm: number;
   revenueUtm: number;
   addToCarts: number;
-  ordersPromo: number;
+  ordersPromo: number; // RECU DU BACKEND (Intersection)
   revenuePromo: number;
   fixedCost: number;
   commissionPercent: number;
@@ -132,11 +132,14 @@ function CampaignCard({
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
 
-  // --- STATS (Basées sur le tracking UTM principal) ---
+  // --- STATS D'AFFICHAGE ---
+  // On se base PRINCIPALEMENT sur le tracking UTM pour les performances globales
   const revenue = campaign.revenueUtm;
-  const orders = campaign.ordersUtm;
+  const orders = campaign.ordersUtm; 
   
-  // Utilisation réelle du code promo (indépendant du tracking lien)
+  // Utilisation "Vérifiée" du Code Promo (Calculée par le backend via intersection)
+  // Scénario 2: UTM + Code => ordersPromo = 1
+  // Scénario 1, 3, 5: Code manquant, mauvais code ou pas de lien => ordersPromo = 0
   const promoCountDisplay = campaign.ordersPromo; 
 
   const commissionCost = revenue * (campaign.commissionPercent / 100);
@@ -221,6 +224,7 @@ function CampaignCard({
           {renderTarget()}
         </div>
 
+        {/* AFFICHAGE CODE PROMO (Scénario 4: Si pas de code, rien ne s'affiche) */}
         {campaign.promoCode && (
           <div className="flex items-center justify-between text-xs mt-3">
             <div className="flex items-center gap-2">
@@ -230,7 +234,7 @@ function CampaignCard({
                 {campaign.promoCode}
               </div>
             </div>
-            {/* Affichage du nombre d'utilisation du code */}
+            {/* Scénario 1, 2, 3, 5 : Affiche le résultat de l'intersection (0 ou 1) */}
             <span className="font-medium text-muted-foreground">
               {promoCountDisplay} {t("camp.used")}
             </span>
