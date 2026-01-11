@@ -2,14 +2,13 @@ export type Language = "en" | "fr";
 
 export const translations = {
   en: {
-    // Navigation
     "nav.dashboard": "Dashboard",
     "nav.influencers": "Influencers",
     "nav.campaigns": "Campaigns",
+    "nav.discounts": "Discount Codes", // NOUVEAU
     "nav.settings": "Settings",
     "nav.subtitle": "Track ROI",
     
-    // Common Actions & Words
     "common.save": "Save Changes",
     "common.cancel": "Cancel",
     "common.create": "Create",
@@ -27,7 +26,6 @@ export const translations = {
     "common.failed": "Action failed",
     "common.confirm_delete": "Are you sure you want to delete this?",
     
-    // Dashboard
     "dash.title": "Dashboard",
     "dash.subtitle": "Track your influencer marketing performance and ROI",
     "dash.total_influencers": "Total Influencers",
@@ -48,13 +46,19 @@ export const translations = {
     "dash.col_conv": "Conv. Rate",
     "dash.col_revenue": "Revenue",
     "dash.col_roas": "ROAS",
-    "dash.tab_utm": "UTM Link + Code",
-    "dash.tab_promo": "Promo Code Only",
     "dash.no_campaigns": "No campaigns yet",
     "dash.create_first": "Create your first campaign to start tracking.",
     "dash.link_copied": "Link copied!",
 
-    // Settings
+    // NOUVEAU : Page Discounts
+    "disc.title": "Discount Codes",
+    "disc.subtitle": "Performance by discount code usage",
+    "disc.col_code": "Discount Code",
+    "disc.col_orders": "Orders",
+    "disc.col_sales": "Total Sales",
+    "disc.col_aov": "Average Order Value",
+    "disc.no_data": "No discount usage found for this period",
+
     "settings.title": "Settings",
     "settings.subtitle": "Manage your application preferences",
     "settings.tab_language": "Language",
@@ -76,7 +80,6 @@ export const translations = {
     "settings.overlap_error": "Overlap detected!",
     "settings.max_gt_min": "Max must be greater than Min",
 
-    // Influencers
     "inf.title": "Influencers",
     "inf.subtitle": "Manage your influencer partnerships and profiles",
     "inf.add_btn": "Add Influencer",
@@ -89,8 +92,6 @@ export const translations = {
     "inf.new": "(New)",
     "inf.created": "Influencer created successfully",
     "inf.updated": "Influencer updated successfully",
-    
-    // Influencer Form
     "inf.form.edit_title": "Edit Influencer",
     "inf.form.add_title": "Add New Influencer",
     "inf.form.name": "Name*",
@@ -106,12 +107,9 @@ export const translations = {
     "inf.form.followers": "Followers",
     "inf.form.upload": "Upload",
 
-    // Campaigns
     "camp.title": "Campaigns",
     "camp.subtitle": "Manage your influencer marketing campaigns",
     "camp.add_btn": "Create",
-    "camp.tab_utm": "Link UTM + Code",
-    "camp.tab_promo": "Promo Code Only",
     "camp.sort_date_desc": "📅 Date (Newest)",
     "camp.sort_date_asc": "📅 Date (Oldest)",
     "camp.sort_rev_desc": "💰 Revenue (High → Low)",
@@ -131,8 +129,6 @@ export const translations = {
     "camp.created": "Campaign created",
     "camp.updated": "Campaign updated",
     "camp.link_copied": "Sponsored link copied",
-    
-    // Campaign Form
     "camp.form.edit_title": "Edit Campaign",
     "camp.form.new_title": "New Campaign",
     "camp.form.influencer": "Influencer",
@@ -152,14 +148,13 @@ export const translations = {
     "camp.form.commission": "Commission %",
   },
   fr: {
-    // Navigation
     "nav.dashboard": "Tableau de bord",
     "nav.influencers": "Influenceurs",
     "nav.campaigns": "Campagnes",
+    "nav.discounts": "Codes Promo", // NOUVEAU
     "nav.settings": "Paramètres",
     "nav.subtitle": "Suivi ROI",
     
-    // Common Actions
     "common.save": "Enregistrer",
     "common.cancel": "Annuler",
     "common.create": "Créer",
@@ -177,7 +172,6 @@ export const translations = {
     "common.failed": "Échec de l'action",
     "common.confirm_delete": "Êtes-vous sûr de vouloir supprimer ceci ?",
     
-    // Dashboard
     "dash.title": "Tableau de bord",
     "dash.subtitle": "Suivez vos performances marketing et votre ROI",
     "dash.total_influencers": "Total Influenceurs",
@@ -198,13 +192,19 @@ export const translations = {
     "dash.col_conv": "Taux Conv.",
     "dash.col_revenue": "Revenu",
     "dash.col_roas": "ROAS",
-    "dash.tab_utm": "Lien UTM + Code",
-    "dash.tab_promo": "Code Promo Seul",
     "dash.no_campaigns": "Aucune campagne",
     "dash.create_first": "Créez votre première campagne pour démarrer le suivi.",
     "dash.link_copied": "Lien copié !",
 
-    // Settings
+    // NOUVEAU : Page Discounts
+    "disc.title": "Codes Promo",
+    "disc.subtitle": "Performance par utilisation de code de réduction",
+    "disc.col_code": "Code Promo",
+    "disc.col_orders": "Commandes",
+    "disc.col_sales": "Ventes Totales",
+    "disc.col_aov": "Panier Moyen",
+    "disc.no_data": "Aucune utilisation de code sur cette période",
+
     "settings.title": "Paramètres",
     "settings.subtitle": "Gérez vos préférences d'application",
     "settings.tab_language": "Langue",
@@ -226,7 +226,6 @@ export const translations = {
     "settings.overlap_error": "Chevauchement détecté !",
     "settings.max_gt_min": "Le Max doit être supérieur au Min",
 
-    // Influencers
     "inf.title": "Influenceurs",
     "inf.subtitle": "Gérez vos partenariats et profils d'influenceurs",
     "inf.add_btn": "Ajouter",
@@ -239,8 +238,6 @@ export const translations = {
     "inf.new": "(Nouv)",
     "inf.created": "Influenceur créé avec succès",
     "inf.updated": "Influenceur mis à jour avec succès",
-    
-    // Influencer Form
     "inf.form.edit_title": "Modifier Influenceur",
     "inf.form.add_title": "Nouvel Influenceur",
     "inf.form.name": "Nom*",
@@ -256,12 +253,9 @@ export const translations = {
     "inf.form.followers": "Abonnés",
     "inf.form.upload": "Upload",
 
-    // Campaigns
     "camp.title": "Campagnes",
     "camp.subtitle": "Gérez vos campagnes de marketing d'influence",
     "camp.add_btn": "Créer",
-    "camp.tab_utm": "Lien UTM + Code",
-    "camp.tab_promo": "Code Promo Seul",
     "camp.sort_date_desc": "📅 Date (Récent)",
     "camp.sort_date_asc": "📅 Date (Ancien)",
     "camp.sort_rev_desc": "💰 Revenu (Haut → Bas)",
@@ -281,8 +275,6 @@ export const translations = {
     "camp.created": "Campagne créée",
     "camp.updated": "Campagne mise à jour",
     "camp.link_copied": "Lien sponsorisé copié",
-    
-    // Campaign Form
     "camp.form.edit_title": "Modifier Campagne",
     "camp.form.new_title": "Nouvelle Campagne",
     "camp.form.influencer": "Influenceur",

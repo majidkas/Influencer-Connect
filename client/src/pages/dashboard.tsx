@@ -26,9 +26,11 @@ import {
   Package, Tag, Copy, Check, Link, CreditCard, Home 
 } from "lucide-react";
 import { useI18n } from "@/lib/i18nContext";
+import { useDate } from "@/lib/date-context"; // Import du contexte de date
 import type { CampaignWithStats } from "@shared/schema";
 
 // --- TYPES ---
+// On garde votre interface complète pour ne rien casser
 interface CampaignDashboardStats extends CampaignWithStats {
   ordersUtm: number;
   revenueUtm: number;
@@ -44,6 +46,8 @@ interface CampaignDashboardStats extends CampaignWithStats {
   targetType?: string;
 }
 
+// --- FONCTIONS UTILITAIRES ---
+
 const formatCurrency = (amount: number, currency: string = "EUR"): string => {
   return new Intl.NumberFormat("fr-FR", {
     style: "currency",
@@ -54,8 +58,6 @@ const formatCurrency = (amount: number, currency: string = "EUR"): string => {
 const formatNumber = (num: number): string => {
   return new Intl.NumberFormat("en-US").format(num);
 };
-
-// --- COMPOSANTS UTILITAIRES ---
 
 function StatCard({
   title,
@@ -177,12 +179,14 @@ function CopyLinkButton({ campaign }: { campaign: CampaignDashboardStats }) {
   );
 }
 
-// --- MAIN COMPONENT ---
+// --- COMPOSANT PRINCIPAL ---
 
 export default function Dashboard() {
   const { t } = useI18n();
-  const [activeTab, setActiveTab] = useState<"utm" | "promo">("utm");
+  // On récupère les dates sélectionnées par l'utilisateur
+  const { from, to } = useDate(); 
 
+  // Requête API pour les stats globales (filtrées par date)
   const { data: stats, isLoading: statsLoading } = useQuery<{
     totalInfluencers: number;
     activeCampaigns: number;
@@ -190,21 +194,35 @@ export default function Dashboard() {
     totalCosts: number;
     averageRoas: number;
   }>({ 
-    queryKey: ["/api/stats"] 
+    queryKey: ["/api/stats", from, to], // La clé change quand la date change = rechargement auto
+    queryFn: async () => {
+      // On passe les dates en paramètres d'URL
+      const res = await fetch(`/api/stats?from=${from}&to=${to}`);
+      return res.json();
+    }
   });
   
+  // Requête API pour le tableau des campagnes (filtrées par date)
   const { data: campaigns, isLoading: campaignsLoading } = useQuery<CampaignDashboardStats[]>({
-    queryKey: ["/api/campaigns/stats"],
+    queryKey: ["/api/campaigns/stats", from, to],
+    queryFn: async () => {
+      const res = await fetch(`/api/campaigns/stats?from=${from}&to=${to}`);
+      return res.json();
+    }
   });
 
+  // Calcul des stats d'une ligne (Fixé sur UTM comme demandé)
   const getDynamicStats = (campaign: CampaignDashboardStats) => {
-    const isUtm = activeTab === "utm";
-    const revenue = isUtm ? campaign.revenueUtm : campaign.revenuePromo;
-    const orders = isUtm ? campaign.ordersUtm : campaign.ordersPromo;
+    // On force l'utilisation des données UTM (le mode complet)
+    const revenue = campaign.revenueUtm;
+    const orders = campaign.ordersUtm; 
+    
     const commissionCost = revenue * (campaign.commissionPercent / 100);
     const totalCost = campaign.fixedCost + commissionCost;
+    
     const roas = totalCost > 0 ? revenue / totalCost : 0;
-    const convRate = isUtm && campaign.clicks > 0 ? (orders / campaign.clicks) * 100 : 0;
+    const convRate = campaign.clicks > 0 ? (orders / campaign.clicks) * 100 : 0;
+    
     return { revenue, orders, totalCost, roas, convRate };
   };
 
@@ -215,7 +233,7 @@ export default function Dashboard() {
         <p className="text-muted-foreground">{t("dash.subtitle")}</p>
       </div>
 
-      {/* STATS CARDS (GLOBAL) */}
+      {/* CARTES DE STATISTIQUES */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         {statsLoading ? (
           Array.from({ length: 5 }).map((_, i) => (
@@ -259,32 +277,11 @@ export default function Dashboard() {
         )}
       </div>
 
+      {/* TABLEAU DE PERFORMANCE */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>{t("dash.campaign_performance")}</CardTitle>
-          
-          <div className="flex p-1 bg-muted rounded-lg border">
-            <button
-              onClick={() => setActiveTab("utm")}
-              className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-                activeTab === "utm" 
-                  ? "bg-background text-foreground shadow-sm" 
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-              }`}
-            >
-              {t("dash.tab_utm")}
-            </button>
-            <button
-              onClick={() => setActiveTab("promo")}
-              className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${
-                activeTab === "promo" 
-                  ? "bg-background text-foreground shadow-sm" 
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-              }`}
-            >
-              {t("dash.tab_promo")}
-            </button>
-          </div>
+          {/* Les onglets ont été supprimés ici comme demandé */}
         </CardHeader>
         
         <CardContent>
@@ -305,21 +302,24 @@ export default function Dashboard() {
                     <TableHead className="min-w-[150px]">{t("dash.col_influencer")}</TableHead>
                     <TableHead className="min-w-[150px]">{t("dash.col_target")}</TableHead>
                     
-                    {activeTab === "utm" && <TableHead className="text-center w-[50px]">{t("dash.col_link")}</TableHead>}
+                    {/* Colonnes spécifiques UTM toujours affichées maintenant */}
+                    <TableHead className="text-center w-[50px]">{t("dash.col_link")}</TableHead>
                     
                     <TableHead className="text-right">{t("dash.col_cost")}</TableHead>
                     
-                    {activeTab === "utm" && (
-                      <>
-                        <TableHead className="text-right"><MousePointer className="h-3 w-3 inline mr-1"/>{t("dash.col_clicks")}</TableHead>
-                        <TableHead className="text-right"><ShoppingCart className="h-3 w-3 inline mr-1"/>{t("dash.col_cart")}</TableHead>
-                      </>
-                    )}
+                    <TableHead className="text-right">
+                      <MousePointer className="h-3 w-3 inline mr-1"/>{t("dash.col_clicks")}
+                    </TableHead>
+                    <TableHead className="text-right">
+                      <ShoppingCart className="h-3 w-3 inline mr-1"/>{t("dash.col_cart")}
+                    </TableHead>
 
-                    <TableHead className="text-right"><Package className="h-3 w-3 inline mr-1"/>{t("dash.col_orders")}</TableHead>
+                    <TableHead className="text-right">
+                      <Package className="h-3 w-3 inline mr-1"/>{t("dash.col_orders")}
+                    </TableHead>
                     <TableHead className="text-right">{t("dash.col_promo")}</TableHead>
                     
-                    {activeTab === "utm" && <TableHead className="text-right">{t("dash.col_conv")}</TableHead>}
+                    <TableHead className="text-right">{t("dash.col_conv")}</TableHead>
                     
                     <TableHead className="text-right">{t("dash.col_revenue")}</TableHead>
                     <TableHead className="text-right">{t("dash.col_roas")}</TableHead>
@@ -328,7 +328,8 @@ export default function Dashboard() {
                 <TableBody>
                   {campaigns.map((campaign) => {
                     const stats = getDynamicStats(campaign);
-                    const promoCountDisplay = activeTab === "utm" ? campaign.ordersUtm : campaign.ordersPromo;
+                    // On affiche le vrai nombre d'utilisation du code promo (indépendant du tracking UTM)
+                    const promoCountDisplay = campaign.ordersPromo; 
 
                     return (
                       <TableRow key={campaign.id}>
@@ -348,20 +349,14 @@ export default function Dashboard() {
 
                         <TableCell><TargetCell campaign={campaign} /></TableCell>
 
-                        {activeTab === "utm" && (
-                          <TableCell className="text-center"><CopyLinkButton campaign={campaign} /></TableCell>
-                        )}
+                        <TableCell className="text-center"><CopyLinkButton campaign={campaign} /></TableCell>
 
                         <TableCell className="text-right tabular-nums text-muted-foreground">
                           {formatCurrency(stats.totalCost, campaign.currency)}
                         </TableCell>
 
-                        {activeTab === "utm" && (
-                          <>
-                            <TableCell className="text-right tabular-nums">{formatNumber(campaign.clicks)}</TableCell>
-                            <TableCell className="text-right tabular-nums">{formatNumber(campaign.addToCarts)}</TableCell>
-                          </>
-                        )}
+                        <TableCell className="text-right tabular-nums">{formatNumber(campaign.clicks)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatNumber(campaign.addToCarts)}</TableCell>
 
                         <TableCell className="text-right tabular-nums font-medium">
                           {formatNumber(stats.orders)}
@@ -378,11 +373,9 @@ export default function Dashboard() {
                           ) : <span className="text-muted-foreground">-</span>}
                         </TableCell>
 
-                        {activeTab === "utm" && (
-                          <TableCell className="text-right tabular-nums">
-                            {stats.convRate.toFixed(1)}%
-                          </TableCell>
-                        )}
+                        <TableCell className="text-right tabular-nums">
+                          {stats.convRate.toFixed(1)}%
+                        </TableCell>
 
                         <TableCell className="text-right tabular-nums font-medium text-green-600">
                           {formatCurrency(stats.revenue, campaign.currency)}

@@ -1,4 +1,4 @@
-import { BarChart3, Users, Megaphone, TrendingUp, Settings } from "lucide-react";
+import { BarChart3, Users, Megaphone, TrendingUp, Settings, Tag } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -11,17 +11,15 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-// IMPORT DU HOOK
 import { useI18n } from "@/lib/i18nContext";
 
 export function AppSidebar() {
   const [location] = useLocation();
-  const { t } = useI18n(); // On récupère la fonction t
+  const { t } = useI18n();
 
-  // On définit le menu DANS le composant pour pouvoir utiliser t()
   const menuItems = [
     {
-      title: t("nav.dashboard"), // Utilisation de la clé
+      title: t("nav.dashboard"),
       url: "/",
       icon: BarChart3,
     },
@@ -34,6 +32,11 @@ export function AppSidebar() {
       title: t("nav.campaigns"),
       url: "/campaigns",
       icon: Megaphone,
+    },
+    {
+      title: t("nav.discounts"), // Lien ajouté
+      url: "/discounts",
+      icon: Tag,
     },
     {
       title: t("nav.settings"),
@@ -68,10 +71,7 @@ export function AppSidebar() {
                 const isActive = location === item.url;
                 return (
                   <SidebarMenuItem key={item.url}>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={isActive}
-                    >
+                    <SidebarMenuButton asChild isActive={isActive}>
                       <Link href={item.url}>
                         <item.icon className="h-4 w-4" />
                         <span>{item.title}</span>
