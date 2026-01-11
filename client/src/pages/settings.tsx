@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -10,15 +10,21 @@ import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Settings as SettingsIcon, Languages, Star, Loader2 } from "lucide-react";
+import { Settings as SettingsIcon, Languages, Star, Loader2, ArrowRight } from "lucide-react";
 import type { Settings } from "@shared/schema";
 
-// Schema de validation
+// Schema mis à jour avec les 5 valeurs de seuil
 const settingsSchema = z.object({
   language: z.enum(["en", "fr"]),
-  minRoas2Stars: z.coerce.number().min(0, "Must be positive"),
-  minRoas3Stars: z.coerce.number().min(0, "Must be positive"),
   lossText: z.string().min(1, "Required"),
+  
+  star1Min: z.coerce.number().min(0),
+  star1Max: z.coerce.number().min(0),
+  
+  star2Min: z.coerce.number().min(0),
+  star2Max: z.coerce.number().min(0),
+  
+  star3Min: z.coerce.number().min(0),
 });
 
 type SettingsFormData = z.infer<typeof settingsSchema>;
@@ -27,12 +33,10 @@ export default function SettingsPage() {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<"language" | "rating">("language");
 
-  // Fetch Settings
   const { data: settings, isLoading } = useQuery<Settings>({
     queryKey: ["/api/settings"],
   });
 
-  // Update Mutation
   const updateMutation = useMutation({
     mutationFn: (data: SettingsFormData) => apiRequest("POST", "/api/settings", data),
     onSuccess: () => {
@@ -42,16 +46,31 @@ export default function SettingsPage() {
     onError: () => toast({ title: "Failed to update", variant: "destructive" }),
   });
 
-  // Form Setup
   const form = useForm<SettingsFormData>({
     resolver: zodResolver(settingsSchema),
-    values: {
-      language: (settings?.language as "en" | "fr") || "fr",
-      minRoas2Stars: settings?.minRoas2Stars || 2.0,
-      minRoas3Stars: settings?.minRoas3Stars || 4.0,
-      lossText: settings?.lossText || "⚠️ Loss !",
-    },
+    defaultValues: {
+      language: "fr",
+      lossText: "⚠️ Loss !",
+      star1Min: 0, star1Max: 1.99,
+      star2Min: 2, star2Max: 2.99,
+      star3Min: 3
+    }
   });
+
+  // Mise à jour du formulaire quand les données arrivent
+  useEffect(() => {
+    if (settings) {
+      form.reset({
+        language: (settings.language as "en" | "fr") || "fr",
+        lossText: settings.lossText || "⚠️ Loss !",
+        star1Min: settings.star1Min ?? 0,
+        star1Max: settings.star1Max ?? 1.99,
+        star2Min: settings.star2Min ?? 2,
+        star2Max: settings.star2Max ?? 2.99,
+        star3Min: settings.star3Min ?? 3,
+      });
+    }
+  }, [settings, form]);
 
   const onSubmit = (data: SettingsFormData) => {
     updateMutation.mutate(data);
@@ -62,7 +81,6 @@ export default function SettingsPage() {
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       
-      {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <div className="h-10 w-10 bg-primary/10 rounded-lg flex items-center justify-center">
           <SettingsIcon className="h-6 w-6 text-primary" />
@@ -97,11 +115,9 @@ export default function SettingsPage() {
         </button>
       </div>
 
-      {/* Content */}
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
           
-          {/* TAB: LANGUAGE */}
           {activeTab === "language" && (
             <Card>
               <CardHeader>
@@ -115,7 +131,7 @@ export default function SettingsPage() {
                   render={({ field }) => (
                     <FormItem className="max-w-sm">
                       <FormLabel>Language</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <Select onValueChange={field.onChange} value={field.value}>
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="Select language" />
@@ -134,95 +150,127 @@ export default function SettingsPage() {
             </Card>
           )}
 
-          {/* TAB: RATING SYSTEM */}
           {activeTab === "rating" && (
             <Card>
               <CardHeader>
                 <CardTitle>Influencer Rating Logic</CardTitle>
-                <CardDescription>
-                  Define the ROAS thresholds to automatically assign stars to influencers.
-                </CardDescription>
+                <CardDescription>Define ROAS thresholds manually.</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-6">
+              <CardContent className="space-y-8">
                 
-                {/* 1 STAR EXPLANATION */}
-                <div className="p-3 bg-muted rounded border border-dashed flex items-center gap-3">
-                  <div className="flex gap-0.5">
-                    <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                    <Star className="h-4 w-4 text-muted-foreground/20" />
-                    <Star className="h-4 w-4 text-muted-foreground/20" />
+                {/* 1. NEGATIVE ROAS */}
+                <div className="space-y-3 p-4 bg-red-50/50 border border-red-100 rounded-lg">
+                  <h3 className="font-medium text-red-800 flex items-center gap-2 text-sm">
+                    ⚠️ Negative ROAS (ROAS {"<"} 0)
+                  </h3>
+                  <FormField
+                    control={form.control}
+                    name="lossText"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Display Text</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="⚠️ Loss !" className="bg-white" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                {/* 2. ONE STAR */}
+                <div className="space-y-3 p-4 bg-muted/30 border rounded-lg">
+                  <h3 className="font-medium flex items-center gap-2 text-sm">
+                    <div className="flex gap-0.5">
+                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                      <Star className="h-3 w-3 text-muted-foreground/20" />
+                      <Star className="h-3 w-3 text-muted-foreground/20" />
+                    </div>
+                    1 Star Range
+                  </h3>
+                  <div className="flex items-center gap-4">
+                    <FormField
+                      control={form.control}
+                      name="star1Min"
+                      render={({ field }) => (
+                        <FormItem className="flex-1">
+                          <FormLabel className="text-xs">Min ROAS</FormLabel>
+                          <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <ArrowRight className="h-4 w-4 text-muted-foreground mt-6" />
+                    <FormField
+                      control={form.control}
+                      name="star1Max"
+                      render={({ field }) => (
+                        <FormItem className="flex-1">
+                          <FormLabel className="text-xs">Max ROAS</FormLabel>
+                          <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
+                        </FormItem>
+                      )}
+                    />
                   </div>
-                  <span className="text-sm">
-                    <strong>1 Star:</strong> Automatically applied for ROAS between <strong>0</strong> and <strong>{form.watch("minRoas2Stars")}</strong>.
-                  </span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* 2 STARS THRESHOLD */}
-                  <FormField
-                    control={form.control}
-                    name="minRoas2Stars"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="flex items-center gap-2">
-                          Min ROAS for 2 Stars
-                          <div className="flex gap-0.5 scale-75">
-                            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                            <Star className="h-3 w-3 text-muted-foreground/20" />
-                          </div>
-                        </FormLabel>
-                        <FormControl>
-                          <Input type="number" step="0.1" {...field} />
-                        </FormControl>
-                        <p className="text-[10px] text-muted-foreground">
-                          Default: 2.0 (Range: {field.value} to {form.watch("minRoas3Stars")})
-                        </p>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  {/* 3 STARS THRESHOLD */}
-                  <FormField
-                    control={form.control}
-                    name="minRoas3Stars"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="flex items-center gap-2">
-                          Min ROAS for 3 Stars
-                          <div className="flex gap-0.5 scale-75">
-                            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                            <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                          </div>
-                        </FormLabel>
-                        <FormControl>
-                          <Input type="number" step="0.1" {...field} />
-                        </FormControl>
-                        <p className="text-[10px] text-muted-foreground">
-                          Default: 4.0 (Applied if ROAS ≥ {field.value})
-                        </p>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                {/* 3. TWO STARS */}
+                <div className="space-y-3 p-4 bg-muted/30 border rounded-lg">
+                  <h3 className="font-medium flex items-center gap-2 text-sm">
+                    <div className="flex gap-0.5">
+                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                      <Star className="h-3 w-3 text-muted-foreground/20" />
+                    </div>
+                    2 Stars Range
+                  </h3>
+                  <div className="flex items-center gap-4">
+                    <FormField
+                      control={form.control}
+                      name="star2Min"
+                      render={({ field }) => (
+                        <FormItem className="flex-1">
+                          <FormLabel className="text-xs">Min ROAS</FormLabel>
+                          <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
+                        </FormItem>
+                      )}
+                    />
+                    <ArrowRight className="h-4 w-4 text-muted-foreground mt-6" />
+                    <FormField
+                      control={form.control}
+                      name="star2Max"
+                      render={({ field }) => (
+                        <FormItem className="flex-1">
+                          <FormLabel className="text-xs">Max ROAS</FormLabel>
+                          <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
                 </div>
 
-                {/* LOSS TEXT */}
-                <FormField
-                  control={form.control}
-                  name="lossText"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Loss Label (if ROAS {"<"} 0)</FormLabel>
-                      <FormControl>
-                        <Input {...field} placeholder="⚠️ Loss !" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                {/* 4. THREE STARS */}
+                <div className="space-y-3 p-4 bg-muted/30 border rounded-lg">
+                  <h3 className="font-medium flex items-center gap-2 text-sm">
+                    <div className="flex gap-0.5">
+                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                    </div>
+                    3 Stars Threshold
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground mt-2">ROAS Greater than or equal to:</span>
+                    <FormField
+                      control={form.control}
+                      name="star3Min"
+                      render={({ field }) => (
+                        <FormItem className="w-32">
+                          <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                </div>
 
               </CardContent>
             </Card>

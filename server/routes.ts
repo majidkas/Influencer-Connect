@@ -24,16 +24,19 @@ export async function registerRoutes(server: Server, app: Express) {
 
   // --- API SETTINGS (NOUVEAU) ---
   
-  // Récupérer les paramètres (crée par défaut si inexistant)
+// Récupérer les paramètres (crée par défaut si inexistant)
   router.get("/api/settings", async (req, res) => {
     try {
       const [setting] = await db.select().from(settings).limit(1);
       if (!setting) {
-        // Valeurs par défaut si pas de config
+        // Valeurs par défaut mises à jour selon votre demande
         const [newSetting] = await db.insert(settings).values({
           language: "fr",
-          minRoas2Stars: 2.0,
-          minRoas3Stars: 4.0,
+          star1Min: 0.0,
+          star1Max: 1.99,
+          star2Min: 2.0,
+          star2Max: 2.99,
+          star3Min: 3.0,
           lossText: "⚠️ Loss !"
         }).returning();
         return res.json(newSetting);

@@ -131,24 +131,34 @@ function InfluencerCard({
     }).format(amount);
   };
 
-  // --- LOGIQUE DE NOTATION 3 ETOILES (DYNAMIQUE) ---
+// --- LOGIQUE DE NOTATION 3 ETOILES (DYNAMIQUE) ---
   const renderActiveRating = (roas: number) => {
-    // Récupération des seuils (ou valeurs par défaut)
-    const t2 = settings?.minRoas2Stars ?? 2.0;
-    const t3 = settings?.minRoas3Stars ?? 4.0;
+    // Valeurs par défaut si settings non chargé
     const lossText = settings?.lossText || "⚠️ Loss !";
+    
+    const s1Min = settings?.star1Min ?? 0;
+    const s1Max = settings?.star1Max ?? 1.99;
+    
+    const s2Min = settings?.star2Min ?? 2.0;
+    const s2Max = settings?.star2Max ?? 2.99;
+    
+    const s3Min = settings?.star3Min ?? 3.0;
 
     if (roas < 0) {
       return <span className="text-red-600 font-bold text-xs flex items-center gap-1">{lossText}</span>;
     }
 
     let starCount = 0;
-    // 1 étoile : de 0 à t2
-    if (roas >= 0 && roas < t2) starCount = 1;
-    // 2 étoiles : de t2 à t3
-    else if (roas >= t2 && roas < t3) starCount = 2;
-    // 3 étoiles : >= t3
-    else if (roas >= t3) starCount = 3;
+    
+    // Logique stricte basée sur les plages définies
+    if (roas >= s1Min && roas <= s1Max) {
+      starCount = 1;
+    } else if (roas >= s2Min && roas <= s2Max) {
+      starCount = 2;
+    } else if (roas >= s3Min) {
+      starCount = 3;
+    }
+    // Note: Si le ROAS tombe dans un "trou" (ex: 1.995 alors que max=1.99 et min=2.00), starCount restera à 0 (étoiles vides), ce qui est logique.
 
     return (
       <div className="flex gap-0.5">
@@ -161,7 +171,6 @@ function InfluencerCard({
       </div>
     );
   };
-
   return (
     <Card className={`hover-elevate ${bgColor}`} data-testid={`card-influencer-${influencer.id}`}>
       <CardHeader className="flex flex-row items-start gap-4 pb-2">

@@ -3,6 +3,10 @@ import { pgTable, text, varchar, integer, real, timestamp, boolean, jsonb } from
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// ... (Gardez les tables shops, influencers, campaigns, events, orders telles quelles)
+// Je remets juste le début pour le contexte, mais ne copiez pas tout si vous avez déjà le reste.
+// COPIEZ JUSTE LA TABLE SETTINGS CI-DESSOUS POUR REMPLACER L'ANCIENNE
+
 // Shopify shops table
 export const shops = pgTable("shops", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -15,7 +19,6 @@ export const shops = pgTable("shops", {
   uninstalledAt: timestamp("uninstalled_at"),
 });
 
-// Influencers table
 export const influencers = pgTable("influencers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
@@ -27,7 +30,6 @@ export const influencers = pgTable("influencers", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Social accounts
 export const socialAccounts = pgTable("social_accounts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   influencerId: varchar("influencer_id").notNull().references(() => influencers.id, { onDelete: "cascade" }),
@@ -36,7 +38,6 @@ export const socialAccounts = pgTable("social_accounts", {
   followersCount: integer("followers_count").default(0),
 });
 
-// Campaigns table
 export const campaigns = pgTable("campaigns", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   influencerId: varchar("influencer_id"), 
@@ -54,7 +55,6 @@ export const campaigns = pgTable("campaigns", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Events table
 export const events = pgTable("events", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   utmCampaign: text("utm_campaign"), 
@@ -65,7 +65,6 @@ export const events = pgTable("events", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// Orders table
 export const orders = pgTable("orders", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   shopifyOrderId: text("shopify_order_id").notNull().unique(),
@@ -75,13 +74,23 @@ export const orders = pgTable("orders", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-// --- NOUVELLE TABLE SETTINGS ---
+// --- TABLE SETTINGS (MISE À JOUR) ---
 export const settings = pgTable("settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  language: text("language").default("fr"), // Langue par défaut
-  minRoas2Stars: real("min_roas_2_stars").default(2.0), // Seuil pour 2 étoiles
-  minRoas3Stars: real("min_roas_3_stars").default(4.0), // Seuil pour 3 étoiles
-  lossText: text("loss_text").default("⚠️ Loss !"), // Texte si < 0
+  language: text("language").default("fr"),
+  
+  // Logic 1 étoile (Plage)
+  star1Min: real("star_1_min").default(0.0),
+  star1Max: real("star_1_max").default(1.99),
+  
+  // Logic 2 étoiles (Plage)
+  star2Min: real("star_2_min").default(2.0),
+  star2Max: real("star_2_max").default(2.99),
+  
+  // Logic 3 étoiles (Seuil Min)
+  star3Min: real("star_3_min").default(3.0),
+  
+  lossText: text("loss_text").default("⚠️ Loss !"),
 });
 
 // Relations
@@ -110,7 +119,6 @@ export const insertInfluencerSchema = createInsertSchema(influencers);
 export const insertSocialAccountSchema = createInsertSchema(socialAccounts);
 export const insertCampaignSchema = createInsertSchema(campaigns);
 export const insertEventSchema = createInsertSchema(events);
-// Export settings schema
 export const insertSettingsSchema = createInsertSchema(settings);
 
 // Types exportés
@@ -124,7 +132,6 @@ export type Campaign = typeof campaigns.$inferSelect;
 export type InsertCampaign = z.infer<typeof insertCampaignSchema>;
 export type Event = typeof events.$inferSelect;
 export type InsertEvent = z.infer<typeof insertEventSchema>;
-// Export settings types
 export type Settings = typeof settings.$inferSelect;
 export type InsertSettings = z.infer<typeof insertSettingsSchema>;
 
