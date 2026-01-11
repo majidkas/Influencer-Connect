@@ -11,87 +11,46 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Settings as SettingsIcon, Languages, Star, Loader2, ArrowRight, AlertTriangle } from "lucide-react";
+import { useI18n } from "@/lib/i18nContext";
 import type { Settings } from "@shared/schema";
 
-// --- SCHEMA DE VALIDATION AVEC LOGIQUE ANTI-CHEVAUCHEMENT ---
 const settingsSchema = z.object({
   language: z.enum(["en", "fr"]),
   lossText: z.string().min(1, "Required"),
-  
   star1Min: z.coerce.number().min(0),
   star1Max: z.coerce.number().min(0),
-  
   star2Min: z.coerce.number().min(0),
   star2Max: z.coerce.number().min(0),
-  
   star3Min: z.coerce.number().min(0),
 }).superRefine((data, ctx) => {
-  // Règle 1: Min < Max pour l'étoile 1
-  if (data.star1Max <= data.star1Min) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Max must be greater than Min",
-      path: ["star1Max"],
-    });
-  }
-
-  // Règle 2: L'étoile 2 doit commencer APRES la fin de l'étoile 1
-  if (data.star2Min < data.star1Max) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `Overlap! Must be >= Star 1 Max (${data.star1Max})`,
-      path: ["star2Min"],
-    });
-  }
-
-  // Règle 3: Min < Max pour l'étoile 2
-  if (data.star2Max <= data.star2Min) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Max must be greater than Min",
-      path: ["star2Max"],
-    });
-  }
-
-  // Règle 4: L'étoile 3 doit commencer APRES la fin de l'étoile 2
-  if (data.star3Min < data.star2Max) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `Overlap! Must be >= Star 2 Max (${data.star2Max})`,
-      path: ["star3Min"],
-    });
-  }
+  if (data.star1Max <= data.star1Min) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Max > Min required", path: ["star1Max"] });
+  if (data.star2Min < data.star1Max) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Overlap! Must be >= ${data.star1Max}`, path: ["star2Min"] });
+  if (data.star2Max <= data.star2Min) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Max > Min required", path: ["star2Max"] });
+  if (data.star3Min < data.star2Max) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Overlap! Must be >= ${data.star2Max}`, path: ["star3Min"] });
 });
 
 type SettingsFormData = z.infer<typeof settingsSchema>;
 
 export default function SettingsPage() {
+  const { t } = useI18n();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<"language" | "rating">("language");
 
-  const { data: settings, isLoading } = useQuery<Settings>({
-    queryKey: ["/api/settings"],
-  });
+  const { data: settings, isLoading } = useQuery<Settings>({ queryKey: ["/api/settings"] });
 
   const updateMutation = useMutation({
     mutationFn: (data: SettingsFormData) => apiRequest("POST", "/api/settings", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
-      toast({ title: "Settings updated successfully" });
+      toast({ title: t("settings.success") });
     },
-    onError: () => toast({ title: "Failed to update", variant: "destructive" }),
+    onError: () => toast({ title: t("common.error"), variant: "destructive" }),
   });
 
   const form = useForm<SettingsFormData>({
     resolver: zodResolver(settingsSchema),
-    defaultValues: {
-      language: "fr",
-      lossText: "⚠️ Loss !",
-      star1Min: 0, star1Max: 1.99,
-      star2Min: 2, star2Max: 2.99,
-      star3Min: 3
-    },
-    mode: "onChange" // Active la validation en temps réel
+    defaultValues: { language: "fr", lossText: "⚠️ Loss !", star1Min: 0, star1Max: 1.99, star2Min: 2, star2Max: 2.99, star3Min: 3 },
+    mode: "onChange"
   });
 
   useEffect(() => {
@@ -108,9 +67,7 @@ export default function SettingsPage() {
     }
   }, [settings, form]);
 
-  const onSubmit = (data: SettingsFormData) => {
-    updateMutation.mutate(data);
-  };
+  const onSubmit = (data: SettingsFormData) => updateMutation.mutate(data);
 
   if (isLoading) return <div className="p-12 text-center"><Loader2 className="animate-spin h-8 w-8 mx-auto text-muted-foreground" /></div>;
 
@@ -122,8 +79,8 @@ export default function SettingsPage() {
           <SettingsIcon className="h-6 w-6 text-primary" />
         </div>
         <div>
-          <h1 className="text-2xl font-semibold">Settings</h1>
-          <p className="text-muted-foreground">Manage your application preferences</p>
+          <h1 className="text-2xl font-semibold">{t("settings.title")}</h1>
+          <p className="text-muted-foreground">{t("settings.subtitle")}</p>
         </div>
       </div>
 
@@ -132,22 +89,18 @@ export default function SettingsPage() {
         <button
           onClick={() => setActiveTab("language")}
           className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${
-            activeTab === "language" 
-              ? "border-b-2 border-primary text-primary bg-primary/5" 
-              : "text-muted-foreground hover:bg-muted"
+            activeTab === "language" ? "border-b-2 border-primary text-primary bg-primary/5" : "text-muted-foreground hover:bg-muted"
           }`}
         >
-          <Languages className="h-4 w-4" /> Language
+          <Languages className="h-4 w-4" /> {t("settings.tab_language")}
         </button>
         <button
           onClick={() => setActiveTab("rating")}
           className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${
-            activeTab === "rating" 
-              ? "border-b-2 border-primary text-primary bg-primary/5" 
-              : "text-muted-foreground hover:bg-muted"
+            activeTab === "rating" ? "border-b-2 border-primary text-primary bg-primary/5" : "text-muted-foreground hover:bg-muted"
           }`}
         >
-          <Star className="h-4 w-4" /> Rating System
+          <Star className="h-4 w-4" /> {t("settings.tab_rating")}
         </button>
       </div>
 
@@ -157,8 +110,8 @@ export default function SettingsPage() {
           {activeTab === "language" && (
             <Card>
               <CardHeader>
-                <CardTitle>Language Preference</CardTitle>
-                <CardDescription>Select the default language for the interface.</CardDescription>
+                <CardTitle>{t("settings.lang_title")}</CardTitle>
+                <CardDescription>{t("settings.lang_desc")}</CardDescription>
               </CardHeader>
               <CardContent>
                 <FormField
@@ -166,13 +119,9 @@ export default function SettingsPage() {
                   name="language"
                   render={({ field }) => (
                     <FormItem className="max-w-sm">
-                      <FormLabel>Language</FormLabel>
+                      <FormLabel>{t("settings.tab_language")}</FormLabel>
                       <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select language" />
-                          </SelectTrigger>
-                        </FormControl>
+                        <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
                         <SelectContent>
                           <SelectItem value="fr">🇫🇷 Français</SelectItem>
                           <SelectItem value="en">🇺🇸 English</SelectItem>
@@ -189,27 +138,23 @@ export default function SettingsPage() {
           {activeTab === "rating" && (
             <Card>
               <CardHeader>
-                <CardTitle>Influencer Rating Logic</CardTitle>
-                <CardDescription>
-                  Define ROAS thresholds manually. Ranges must not overlap.
-                </CardDescription>
+                <CardTitle>{t("settings.rating_title")}</CardTitle>
+                <CardDescription>{t("settings.rating_desc")}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-8">
                 
                 {/* 1. NEGATIVE ROAS */}
                 <div className="space-y-3 p-4 bg-red-50/50 border border-red-100 rounded-lg">
                   <h3 className="font-medium text-red-800 flex items-center gap-2 text-sm">
-                    <AlertTriangle className="h-4 w-4" /> Negative ROAS (ROAS {"<"} 0)
+                    <AlertTriangle className="h-4 w-4" /> {t("settings.neg_roas")}
                   </h3>
                   <FormField
                     control={form.control}
                     name="lossText"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Display Text</FormLabel>
-                        <FormControl>
-                          <Input {...field} placeholder="⚠️ Loss !" className="bg-white" />
-                        </FormControl>
+                        <FormLabel>{t("settings.display_text")}</FormLabel>
+                        <FormControl><Input {...field} className="bg-white" /></FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -220,36 +165,18 @@ export default function SettingsPage() {
                 <div className="space-y-3 p-4 bg-muted/30 border rounded-lg">
                   <h3 className="font-medium flex items-center gap-2 text-sm">
                     <div className="flex gap-0.5">
-                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                      <Star className="h-3 w-3 text-muted-foreground/20" />
-                      <Star className="h-3 w-3 text-muted-foreground/20" />
+                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" /><Star className="h-3 w-3 text-muted-foreground/20" /><Star className="h-3 w-3 text-muted-foreground/20" />
                     </div>
-                    1 Star Range
+                    {t("settings.1star_range")}
                   </h3>
                   <div className="flex flex-col md:flex-row md:items-start gap-4">
-                    <FormField
-                      control={form.control}
-                      name="star1Min"
-                      render={({ field }) => (
-                        <FormItem className="flex-1">
-                          <FormLabel className="text-xs">Min ROAS</FormLabel>
-                          <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    <FormField control={form.control} name="star1Min" render={({ field }) => (
+                        <FormItem className="flex-1"><FormLabel className="text-xs">{t("settings.min_roas")}</FormLabel><FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl><FormMessage /></FormItem>
+                      )} />
                     <ArrowRight className="h-4 w-4 text-muted-foreground mt-8 hidden md:block" />
-                    <FormField
-                      control={form.control}
-                      name="star1Max"
-                      render={({ field }) => (
-                        <FormItem className="flex-1">
-                          <FormLabel className="text-xs">Max ROAS</FormLabel>
-                          <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    <FormField control={form.control} name="star1Max" render={({ field }) => (
+                        <FormItem className="flex-1"><FormLabel className="text-xs">{t("settings.max_roas")}</FormLabel><FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl><FormMessage /></FormItem>
+                      )} />
                   </div>
                 </div>
 
@@ -257,36 +184,18 @@ export default function SettingsPage() {
                 <div className="space-y-3 p-4 bg-muted/30 border rounded-lg">
                   <h3 className="font-medium flex items-center gap-2 text-sm">
                     <div className="flex gap-0.5">
-                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                      <Star className="h-3 w-3 text-muted-foreground/20" />
+                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" /><Star className="h-3 w-3 fill-yellow-400 text-yellow-400" /><Star className="h-3 w-3 text-muted-foreground/20" />
                     </div>
-                    2 Stars Range
+                    {t("settings.2star_range")}
                   </h3>
                   <div className="flex flex-col md:flex-row md:items-start gap-4">
-                    <FormField
-                      control={form.control}
-                      name="star2Min"
-                      render={({ field }) => (
-                        <FormItem className="flex-1">
-                          <FormLabel className="text-xs">Min ROAS</FormLabel>
-                          <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    <FormField control={form.control} name="star2Min" render={({ field }) => (
+                        <FormItem className="flex-1"><FormLabel className="text-xs">{t("settings.min_roas")}</FormLabel><FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl><FormMessage /></FormItem>
+                      )} />
                     <ArrowRight className="h-4 w-4 text-muted-foreground mt-8 hidden md:block" />
-                    <FormField
-                      control={form.control}
-                      name="star2Max"
-                      render={({ field }) => (
-                        <FormItem className="flex-1">
-                          <FormLabel className="text-xs">Max ROAS</FormLabel>
-                          <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    <FormField control={form.control} name="star2Max" render={({ field }) => (
+                        <FormItem className="flex-1"><FormLabel className="text-xs">{t("settings.max_roas")}</FormLabel><FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl><FormMessage /></FormItem>
+                      )} />
                   </div>
                 </div>
 
@@ -294,27 +203,17 @@ export default function SettingsPage() {
                 <div className="space-y-3 p-4 bg-muted/30 border rounded-lg">
                   <h3 className="font-medium flex items-center gap-2 text-sm">
                     <div className="flex gap-0.5">
-                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" /><Star className="h-3 w-3 fill-yellow-400 text-yellow-400" /><Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
                     </div>
-                    3 Stars Threshold
+                    {t("settings.3star_threshold")}
                   </h3>
                   <div className="flex items-center gap-2">
                     <div className="w-full md:w-1/3">
-                      <FormField
-                        control={form.control}
-                        name="star3Min"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="text-xs">Min ROAS</FormLabel>
-                            <FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                      <FormField control={form.control} name="star3Min" render={({ field }) => (
+                          <FormItem><FormLabel className="text-xs">{t("settings.min_roas")}</FormLabel><FormControl><Input type="number" step="0.01" {...field} className="bg-white" /></FormControl><FormMessage /></FormItem>
+                        )} />
                     </div>
-                    <span className="text-xs text-muted-foreground mt-6 ml-2">(and above)</span>
+                    <span className="text-xs text-muted-foreground mt-6 ml-2">{t("settings.and_above")}</span>
                   </div>
                 </div>
 
@@ -325,7 +224,7 @@ export default function SettingsPage() {
           <div className="flex justify-end">
             <Button type="submit" disabled={updateMutation.isPending}>
               {updateMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Save Changes
+              {t("common.save")}
             </Button>
           </div>
         </form>

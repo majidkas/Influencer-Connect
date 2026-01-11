@@ -25,6 +25,7 @@ import {
   Users, Megaphone, DollarSign, TrendingUp, MousePointer, ShoppingCart, 
   Package, Tag, Copy, Check, Link, CreditCard, Home 
 } from "lucide-react";
+import { useI18n } from "@/lib/i18nContext";
 import type { CampaignWithStats } from "@shared/schema";
 
 // --- TYPES ---
@@ -148,6 +149,7 @@ function TargetCell({ campaign }: { campaign: CampaignDashboardStats }) {
 
 function CopyLinkButton({ campaign }: { campaign: CampaignDashboardStats }) {
   const { toast } = useToast();
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
 
   const getSponsoredLink = () => {
@@ -163,7 +165,7 @@ function CopyLinkButton({ campaign }: { campaign: CampaignDashboardStats }) {
     if (link) {
       await navigator.clipboard.writeText(link);
       setCopied(true);
-      toast({ title: "Lien copié" });
+      toast({ title: t("dash.link_copied") });
       setTimeout(() => setCopied(false), 2000);
     }
   };
@@ -178,7 +180,7 @@ function CopyLinkButton({ campaign }: { campaign: CampaignDashboardStats }) {
 // --- MAIN COMPONENT ---
 
 export default function Dashboard() {
-  // ETAT POUR LES ONGLETS
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<"utm" | "promo">("utm");
 
   const { data: stats, isLoading: statsLoading } = useQuery<{
@@ -195,34 +197,22 @@ export default function Dashboard() {
     queryKey: ["/api/campaigns/stats"],
   });
 
-  // Fonction utilitaire pour calculer les stats dynamiques selon l'onglet
   const getDynamicStats = (campaign: CampaignDashboardStats) => {
     const isUtm = activeTab === "utm";
-    
-    // Revenue
     const revenue = isUtm ? campaign.revenueUtm : campaign.revenuePromo;
-    
-    // Orders
     const orders = isUtm ? campaign.ordersUtm : campaign.ordersPromo;
-    
-    // Coûts (Fixe + Commission sur le revenu affiché)
     const commissionCost = revenue * (campaign.commissionPercent / 100);
     const totalCost = campaign.fixedCost + commissionCost;
-    
-    // ROAS
     const roas = totalCost > 0 ? revenue / totalCost : 0;
-    
-    // Conv Rate (Uniquement pour UTM car on a les clics)
     const convRate = isUtm && campaign.clicks > 0 ? (orders / campaign.clicks) * 100 : 0;
-
     return { revenue, orders, totalCost, roas, convRate };
   };
 
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
-        <p className="text-muted-foreground">Track your influencer marketing performance and ROI</p>
+        <h1 className="text-2xl font-semibold">{t("dash.title")}</h1>
+        <p className="text-muted-foreground">{t("dash.subtitle")}</p>
       </div>
 
       {/* STATS CARDS (GLOBAL) */}
@@ -241,27 +231,27 @@ export default function Dashboard() {
         ) : (
           <>
             <StatCard
-              title="Total Influencers"
+              title={t("dash.total_influencers")}
               value={formatNumber(stats?.totalInfluencers || 0)}
               icon={Users}
             />
             <StatCard
-              title="Active Campaigns"
+              title={t("dash.active_campaigns")}
               value={formatNumber(stats?.activeCampaigns || 0)}
               icon={Megaphone}
             />
             <StatCard
-              title="Total Revenue"
+              title={t("dash.total_revenue")}
               value={formatCurrency(stats?.totalRevenue || 0)}
               icon={DollarSign}
             />
             <StatCard
-              title="Total Costs"
+              title={t("dash.total_costs")}
               value={formatCurrency(stats?.totalCosts || 0)}
               icon={CreditCard}
             />
             <StatCard
-              title="Average ROAS"
+              title={t("dash.average_roas")}
               value={(stats?.averageRoas || 0).toFixed(2)}
               icon={TrendingUp}
             />
@@ -271,9 +261,8 @@ export default function Dashboard() {
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Campaign Performance</CardTitle>
+          <CardTitle>{t("dash.campaign_performance")}</CardTitle>
           
-          {/* TABS SWITCHER */}
           <div className="flex p-1 bg-muted rounded-lg border">
             <button
               onClick={() => setActiveTab("utm")}
@@ -283,7 +272,7 @@ export default function Dashboard() {
                   : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
               }`}
             >
-              Lien UTM + Code Promo
+              {t("dash.tab_utm")}
             </button>
             <button
               onClick={() => setActiveTab("promo")}
@@ -293,7 +282,7 @@ export default function Dashboard() {
                   : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
               }`}
             >
-              Code Promo Uniquement
+              {t("dash.tab_promo")}
             </button>
           </div>
         </CardHeader>
@@ -304,49 +293,45 @@ export default function Dashboard() {
           ) : !campaigns || campaigns.length === 0 ? (
             <div className="text-center py-12">
               <Megaphone className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-medium mb-2">No campaigns yet</h3>
-              <p className="text-muted-foreground text-sm">Create your first campaign to start tracking.</p>
+              <h3 className="text-lg font-medium mb-2">{t("dash.no_campaigns")}</h3>
+              <p className="text-muted-foreground text-sm">{t("dash.create_first")}</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="min-w-[120px]">Campaign</TableHead>
-                    <TableHead className="min-w-[150px]">Influencer</TableHead>
-                    <TableHead className="min-w-[150px]">Target</TableHead>
+                    <TableHead className="min-w-[120px]">{t("dash.col_campaign")}</TableHead>
+                    <TableHead className="min-w-[150px]">{t("dash.col_influencer")}</TableHead>
+                    <TableHead className="min-w-[150px]">{t("dash.col_target")}</TableHead>
                     
-                    {/* COLONNES CONDITIONNELLES */}
-                    {activeTab === "utm" && <TableHead className="text-center w-[50px]">Link</TableHead>}
+                    {activeTab === "utm" && <TableHead className="text-center w-[50px]">{t("dash.col_link")}</TableHead>}
                     
-                    <TableHead className="text-right">Cost</TableHead>
+                    <TableHead className="text-right">{t("dash.col_cost")}</TableHead>
                     
                     {activeTab === "utm" && (
                       <>
-                        <TableHead className="text-right"><MousePointer className="h-3 w-3 inline mr-1"/>Clicks</TableHead>
-                        <TableHead className="text-right"><ShoppingCart className="h-3 w-3 inline mr-1"/>Cart</TableHead>
+                        <TableHead className="text-right"><MousePointer className="h-3 w-3 inline mr-1"/>{t("dash.col_clicks")}</TableHead>
+                        <TableHead className="text-right"><ShoppingCart className="h-3 w-3 inline mr-1"/>{t("dash.col_cart")}</TableHead>
                       </>
                     )}
 
-                    <TableHead className="text-right"><Package className="h-3 w-3 inline mr-1"/>Orders</TableHead>
-                    <TableHead className="text-right">Promo Code</TableHead>
+                    <TableHead className="text-right"><Package className="h-3 w-3 inline mr-1"/>{t("dash.col_orders")}</TableHead>
+                    <TableHead className="text-right">{t("dash.col_promo")}</TableHead>
                     
-                    {activeTab === "utm" && <TableHead className="text-right">Conv Rate</TableHead>}
+                    {activeTab === "utm" && <TableHead className="text-right">{t("dash.col_conv")}</TableHead>}
                     
-                    <TableHead className="text-right">Revenue</TableHead>
-                    <TableHead className="text-right">ROAS</TableHead>
+                    <TableHead className="text-right">{t("dash.col_revenue")}</TableHead>
+                    <TableHead className="text-right">{t("dash.col_roas")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {campaigns.map((campaign) => {
                     const stats = getDynamicStats(campaign);
-                    
-                    // CORRECTION : Détermination du total à afficher
                     const promoCountDisplay = activeTab === "utm" ? campaign.ordersUtm : campaign.ordersPromo;
 
                     return (
                       <TableRow key={campaign.id}>
-                        {/* Campaign */}
                         <TableCell>
                           <div className="flex flex-col gap-1">
                             <span className="font-medium">{campaign.name}</span>
@@ -354,7 +339,6 @@ export default function Dashboard() {
                           </div>
                         </TableCell>
 
-                        {/* Influencer */}
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <InfluencerAvatar name={campaign.influencer?.name || "?"} imageUrl={campaign.influencer?.profileImageUrl} size="sm" />
@@ -362,20 +346,16 @@ export default function Dashboard() {
                           </div>
                         </TableCell>
 
-                        {/* Target */}
                         <TableCell><TargetCell campaign={campaign} /></TableCell>
 
-                        {/* Link (UTM Only) */}
                         {activeTab === "utm" && (
                           <TableCell className="text-center"><CopyLinkButton campaign={campaign} /></TableCell>
                         )}
 
-                        {/* Cost (Dynamique) */}
                         <TableCell className="text-right tabular-nums text-muted-foreground">
                           {formatCurrency(stats.totalCost, campaign.currency)}
                         </TableCell>
 
-                        {/* Clicks & Cart (UTM Only) */}
                         {activeTab === "utm" && (
                           <>
                             <TableCell className="text-right tabular-nums">{formatNumber(campaign.clicks)}</TableCell>
@@ -383,12 +363,10 @@ export default function Dashboard() {
                           </>
                         )}
 
-                        {/* Orders (Dynamique) */}
                         <TableCell className="text-right tabular-nums font-medium">
                           {formatNumber(stats.orders)}
                         </TableCell>
 
-                        {/* Promo Code (AVEC TOTAL CORRIGÉ) */}
                         <TableCell className="text-right">
                           {campaign.promoCode ? (
                             <div className="flex flex-col items-end">
@@ -400,19 +378,16 @@ export default function Dashboard() {
                           ) : <span className="text-muted-foreground">-</span>}
                         </TableCell>
 
-                        {/* Conv Rate (UTM Only) */}
                         {activeTab === "utm" && (
                           <TableCell className="text-right tabular-nums">
                             {stats.convRate.toFixed(1)}%
                           </TableCell>
                         )}
 
-                        {/* Revenue (Dynamique) */}
                         <TableCell className="text-right tabular-nums font-medium text-green-600">
                           {formatCurrency(stats.revenue, campaign.currency)}
                         </TableCell>
 
-                        {/* ROAS (Dynamique) */}
                         <TableCell className="text-right">
                           <RoiBadge roi={stats.roas} />
                         </TableCell>
