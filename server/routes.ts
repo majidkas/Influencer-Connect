@@ -88,7 +88,7 @@ export async function registerRoutes(server: Server, app: Express) {
     } catch (error) { return res.status(500).send("Installation failed"); }
   });
 
-  // --- STATS GLOBALES (Dashboard) ---
+  // --- STATS GLOBALES ---
   router.get("/api/stats", async (req, res) => {
     try {
       const { from, to } = req.query;
@@ -122,12 +122,14 @@ export async function registerRoutes(server: Server, app: Express) {
     } catch (e) { res.json({ totalInfluencers: 0, activeCampaigns: 0, totalRevenue: 0, totalCosts: 0, averageRoas: 0 }); }
   });
 
-  // --- STATS CAMPAGNES (AVEC LOGIQUE HYBRIDE & DEBUG LOGS) ---
+  // --- STATS CAMPAGNES (CORRECTION PIXEL DIRECT) ---
   router.get("/api/campaigns/stats", async (req: Request, res: Response) => {
     try {
       const { from, to } = req.query;
       const startDate = from ? new Date(from as string) : new Date(0);
       const endDate = to ? new Date(to as string) : new Date();
+
+      console.log(`DEBUG: Stats Range ${startDate.toISOString()} - ${endDate.toISOString()}`);
 
       const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
       const allInfluencers = await db.select().from(influencers);
@@ -169,21 +171,27 @@ export async function registerRoutes(server: Server, app: Express) {
           ordersPromoOnLink = purchaseEvents.filter(event => {
             const payload = event.payload as any;
             
-            // METHODE 1 : Pixel Direct
+            // --- CORRECTION MAJEURE ICI ---
+            // 1. Vérification Directe (Root property) - C'est ce que vos logs montrent !
+            if (payload.promoCode && payload.promoCode.toString().toLowerCase() === cleanCode) {
+              return true;
+            }
+
+            // 2. Vérification Structure Imbriquée (Standard)
             const pixelDiscounts = payload?.data?.checkout?.discountApplications || [];
             if (Array.isArray(pixelDiscounts)) {
               const hasCode = pixelDiscounts.some((d: any) => d.title && d.title.toLowerCase() === cleanCode);
               if (hasCode) return true;
             }
 
-            // METHODE 2 : ID de commande
+            // 3. Fallback ID Commande
             const eventOrderId = payload?.data?.checkout?.order?.id || payload?.id; 
             if (eventOrderId) {
               const match = globalPromoOrders.find(o => o.shopifyOrderId.toString().endsWith(eventOrderId.toString()));
               if (match) return true;
             }
 
-            // METHODE 3 : Temps (30 min de tolérance)
+            // 4. Fallback Temps (30min)
             const matchTime = globalPromoOrders.find(order => {
               const timeDiff = Math.abs(new Date(order.createdAt).getTime() - new Date(event.createdAt).getTime());
               return timeDiff < 30 * 60 * 1000;
@@ -200,7 +208,7 @@ export async function registerRoutes(server: Server, app: Express) {
           ...campaign,
           influencer: influencer || null,
           clicks, addToCarts, ordersUtm, revenueUtm, 
-          ordersPromo: ordersPromoOnLink, 
+          ordersPromo: ordersPromoOnLink, // LE BON CHIFFRE
           revenuePromo: 0, 
           fixedCost, commissionPercent,
           productImage: (() => {
@@ -266,6 +274,7 @@ export async function registerRoutes(server: Server, app: Express) {
         });
         
         const roas = totalCost > 0 ? totalRevenue / totalCost : 0;
+        
         let calculatedRating = 0;
         if (influencerCampaigns.length === 0) calculatedRating = 0; 
         else if (roas < 0) calculatedRating = 1; 
@@ -305,7 +314,7 @@ export async function registerRoutes(server: Server, app: Express) {
     } catch (e) { res.status(500).json({ error: "Failed to fetch discount stats" }); }
   });
 
-  // --- CRUD ROUTES ---
+  // --- CRUD ROUTES (Sans changement) ---
   router.get("/api/campaigns", async (req: Request, res: Response) => {
       const allCampaigns = await db.select().from(campaigns).orderBy(desc(campaigns.createdAt));
       const allInfluencers = await db.select().from(influencers);
@@ -372,58 +381,12 @@ export async function registerRoutes(server: Server, app: Express) {
       try { await db.delete(influencers).where(eq(influencers.id, req.params.id)); res.json({ success: true }); } catch (e) { res.status(500).json({ error: "Delete failed" }); }
   });
 
-  // --- TRACKING AVEC LOGGING COMPLET ---
   router.post("/api/tracking/event", async (req: Request, res: Response) => {
-      try { 
-        const eventData = req.body; 
-        
-        // --- DEBUG: LOG DU PIXEL ---
-        if (eventData.eventType === "purchase") {
-            console.log("=========== 🔍 PIXEL PURCHASE DETECTED ===========");
-            console.log("Payload complet:", JSON.stringify(eventData, null, 2));
-            
-            const discounts = eventData?.data?.checkout?.discountApplications || [];
-            console.log("Codes Promo trouvés (Pixel):", discounts);
-            console.log("==================================================");
-        }
-        // ---------------------------
-
-        await db.insert(events).values({ eventType: eventData.eventType, sessionId: eventData.sessionId, utmCampaign: eventData.slugUtm || "unknown", revenue: eventData.revenue ? parseFloat(eventData.revenue) : 0, payload: eventData, createdAt: new Date() }); 
-        res.json({ success: true }); 
-      } catch (error) { 
-        console.error("TRACKING ERROR:", error);
-        res.status(500).json({ error: "Failed" }); 
-      }
+      try { const eventData = req.body; await db.insert(events).values({ eventType: eventData.eventType, sessionId: eventData.sessionId, utmCampaign: eventData.slugUtm || "unknown", revenue: eventData.revenue ? parseFloat(eventData.revenue) : 0, payload: eventData, createdAt: new Date() }); res.json({ success: true }); } catch (error) { res.status(500).json({ error: "Failed" }); }
   });
 
-  // --- WEBHOOK ORDERS AVEC LOGGING COMPLET ---
   router.post("/api/webhooks/orders/create", async (req: Request, res: Response) => {
-      try { 
-        const order = req.body; 
-        const discountCodes = order.discount_codes || []; 
-        const primaryCode = discountCodes.length > 0 ? discountCodes[0].code : null; 
-        
-        console.log("=========== 📦 WEBHOOK ORDER RECEIVED ===========");
-        console.log(`Order ID: ${order.id}`);
-        console.log(`Total Price: ${order.total_price}`);
-        console.log(`Discount Codes (Shopify): ${JSON.stringify(discountCodes)}`);
-        console.log("=================================================");
-
-        await db.insert(orders).values({ 
-          shopifyOrderId: order.id.toString(), 
-          totalPrice: parseFloat(order.total_price), 
-          currency: order.currency, 
-          promoCode: primaryCode, 
-          createdAt: new Date() 
-        }).onConflictDoUpdate({ 
-          target: orders.shopifyOrderId, 
-          set: { totalPrice: parseFloat(order.total_price), promoCode: primaryCode } 
-        }); 
-        res.status(200).send(); 
-      } catch (e) { 
-        console.error("WEBHOOK ERROR:", e); 
-        res.status(500).send("Error processing webhook"); 
-      }
+      try { const order = req.body; const discountCodes = order.discount_codes || []; const primaryCode = discountCodes.length > 0 ? discountCodes[0].code : null; await db.insert(orders).values({ shopifyOrderId: order.id.toString(), totalPrice: parseFloat(order.total_price), currency: order.currency, promoCode: primaryCode, createdAt: new Date() }).onConflictDoUpdate({ target: orders.shopifyOrderId, set: { totalPrice: parseFloat(order.total_price), promoCode: primaryCode } }); res.status(200).send(); } catch (e) { res.status(500).send("Error processing webhook"); }
   });
 
   // --- HELPERS (Inchangés) ---
