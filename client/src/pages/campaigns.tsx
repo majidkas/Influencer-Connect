@@ -17,7 +17,6 @@ import {
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -35,7 +34,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Plus, Pencil, Trash2, Megaphone, Tag, Percent, Copy, Check, 
-  Loader2, Filter, ShoppingBag, Home, MousePointer, TrendingUp
+  Loader2, Filter, ShoppingBag, Home 
 } from "lucide-react";
 import { useI18n } from "@/lib/i18nContext";
 import type { CampaignWithInfluencer, Influencer } from "@shared/schema";
@@ -115,14 +114,20 @@ function CampaignCard({ campaign, activeTab, onEdit, onDelete }: { campaign: Cam
   const [copied, setCopied] = useState(false);
 
   const isUtm = activeTab === "utm";
+  
+  // DONNÉES DYNAMIQUES
   const revenue = isUtm ? campaign.revenueUtm : campaign.revenuePromo;
-  const orders = isUtm ? campaign.ordersUtm : campaign.ordersPromo;
+  const orders = isUtm ? campaign.ordersUtm : campaign.ordersPromo; // Commandes attribuées selon la méthode choisie
+  
+  // LOGIQUE STRICTE : Le badge "Code Promo" doit TOUJOURS montrer l'utilisation du code, peu importe l'onglet.
+  const realPromoUsage = campaign.ordersPromo; 
+
   const commissionCost = revenue * (campaign.commissionPercent / 100);
   const totalCost = campaign.fixedCost + commissionCost;
   const roas = totalCost > 0 ? revenue / totalCost : 0;
+  
   const convRate = isUtm && campaign.clicks > 0 ? (orders / campaign.clicks) * 100 : 0;
   const clicksDisplay = isUtm ? campaign.clicks : 0;
-  const promoCountDisplay = isUtm ? campaign.ordersUtm : campaign.ordersPromo;
 
   const getSponsoredLink = () => {
     if (campaign.targetType === "homepage") return `?utm_campaign=${campaign.slugUtm}`;
@@ -137,6 +142,9 @@ function CampaignCard({ campaign, activeTab, onEdit, onDelete }: { campaign: Cam
     return (<div className="flex items-center gap-2 text-sm font-medium overflow-hidden">{campaign.productImage ? (<img src={campaign.productImage} alt="Product" className="h-8 w-8 rounded object-cover flex-shrink-0" />) : (<div className="h-8 w-8 bg-muted rounded flex items-center justify-center flex-shrink-0"><ShoppingBag className="h-4 w-4 text-muted-foreground" /></div>)}<span className="truncate" title={campaign.productTitle || "Product"}>{campaign.productTitle || "Product"}</span></div>);
   };
 
+  // Styles pour griser les éléments non pertinents en mode Promo
+  const inactiveStyle = "opacity-20 grayscale transition-all duration-300";
+
   return (
     <Card className="hover-elevate flex flex-col h-full" data-testid={`card-campaign-${campaign.id}`}>
       <CardHeader className="flex flex-row items-start gap-3 pb-2">
@@ -148,10 +156,34 @@ function CampaignCard({ campaign, activeTab, onEdit, onDelete }: { campaign: Cam
       </CardHeader>
       <CardContent className="space-y-3 flex-1 text-sm">
         <div className="bg-muted/30 p-2 rounded border border-border/50">{renderTarget()}</div>
-        {campaign.promoCode && (<div className="flex items-center justify-between text-xs mt-3"><div className="flex items-center gap-2"><span className="text-muted-foreground">{t("dash.col_promo")}:</span><div className="flex items-center gap-1 font-mono font-medium bg-green-50 text-green-700 px-1.5 py-0.5 rounded border border-green-100"><Tag className="h-3 w-3" />{campaign.promoCode}</div></div><span className="font-medium text-muted-foreground">{promoCountDisplay} {t("camp.used")}</span></div>)}
+        
+        {campaign.promoCode && (
+          <div className="flex items-center justify-between text-xs mt-3">
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">{t("dash.col_promo")}:</span>
+              <div className="flex items-center gap-1 font-mono font-medium bg-green-50 text-green-700 px-1.5 py-0.5 rounded border border-green-100">
+                <Tag className="h-3 w-3" />{campaign.promoCode}
+              </div>
+            </div>
+            {/* CORRECTION ICI : On affiche toujours le vrai nombre d'utilisations du code */}
+            <span className="font-medium text-muted-foreground">{realPromoUsage} {t("camp.used")}</span>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-y-3 gap-x-2 pt-3 border-t mt-2">
-          <div className="flex flex-col"><span className="text-[10px] text-muted-foreground">{t("camp.clicks")}</span><span className="font-medium">{clicksDisplay}</span></div>
-          <div className="flex flex-col text-right"><span className="text-[10px] text-muted-foreground">{t("camp.conv")}</span><span className="font-medium">{convRate.toFixed(1)}%</span></div>
+          
+          {/* Clics - Grisé si Promo */}
+          <div className={`flex flex-col ${!isUtm ? inactiveStyle : ""}`}>
+            <span className="text-[10px] text-muted-foreground">{t("camp.clicks")}</span>
+            <span className="font-medium">{isUtm ? clicksDisplay : "-"}</span>
+          </div>
+
+          {/* Taux Conv - Grisé si Promo */}
+          <div className={`flex flex-col text-right ${!isUtm ? inactiveStyle : ""}`}>
+            <span className="text-[10px] text-muted-foreground">{t("camp.conv")}</span>
+            <span className="font-medium">{isUtm ? `${convRate.toFixed(1)}%` : "-"}</span>
+          </div>
+
           <div className="flex flex-col"><span className="text-[10px] text-muted-foreground">{t("camp.orders")}</span><span className="font-medium">{orders}</span></div>
           <div className="flex flex-col text-right"><span className="text-[10px] text-muted-foreground">{t("camp.roas")}</span><span className={`font-semibold ${roas >= 2 ? "text-green-600" : roas > 0 ? "text-orange-600" : "text-muted-foreground"}`}>{roas.toFixed(2)}</span></div>
           <div className="flex flex-col"><span className="text-[10px] text-muted-foreground">{t("camp.total_cost")}</span><span className="font-medium">{formatCurrency(totalCost, campaign.currency)}</span></div>
